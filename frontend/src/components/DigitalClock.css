@@ -1,0 +1,295 @@
+/* DigitalClock — futuristic system clock, top-left HUD corner.
+   Sits under the navbar (top: 94px is where the terminal starts), above the
+   terminal (z-index 950) and below the navbar (1000). Purely decorative, so
+   it never intercepts clicks. */
+
+.digital-clock {
+  position: fixed;
+  top: 96px;
+  left: 18px;
+  z-index: 980;
+  width: 200px;
+  pointer-events: none;
+  user-select: none;
+  /* Glow follows the clipped silhouette, cut corners included */
+  filter: drop-shadow(0 0 14px rgba(0, 240, 255, 0.26))
+    drop-shadow(0 10px 24px rgba(0, 0, 0, 0.55));
+}
+
+.clock-panel {
+  position: relative;
+  overflow: hidden;
+  padding: 10px 13px 12px;
+  /* Angular HUD cut: top-left and bottom-right corners */
+  clip-path: polygon(
+    0 12px,
+    12px 0,
+    100% 0,
+    100% calc(100% - 12px),
+    calc(100% - 12px) 100%,
+    0 100%
+  );
+  background: linear-gradient(
+    155deg,
+    rgba(5, 30, 40, 0.8) 0%,
+    rgba(2, 14, 20, 0.66) 55%,
+    rgba(0, 40, 48, 0.5) 100%
+  );
+  backdrop-filter: blur(14px) saturate(170%);
+  -webkit-backdrop-filter: blur(14px) saturate(170%);
+  box-shadow: inset 0 0 0 1px rgba(0, 240, 255, 0.38),
+    inset 0 0 26px rgba(0, 240, 255, 0.07);
+}
+
+/* CRT scanlines over the panel */
+.clock-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 240, 255, 0.055) 0 1px,
+    transparent 1px 3px
+  );
+  pointer-events: none;
+}
+
+/* Sweeping scan beam */
+.clock-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 45%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(0, 240, 255, 0.12),
+    transparent
+  );
+  animation: clockScan 5s linear infinite;
+}
+
+@keyframes clockScan {
+  0% {
+    transform: translateY(-120%);
+  }
+  100% {
+    transform: translateY(320%);
+  }
+}
+
+/* ── Head: label + timezone ─────────────────────────────────────────────── */
+.clock-head {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.clock-title {
+  color: rgba(0, 240, 255, 0.78);
+}
+
+.clock-zone {
+  margin-left: auto;
+  color: rgba(160, 250, 255, 0.55);
+  letter-spacing: 0.1em;
+}
+
+.clock-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #00f0ff;
+  box-shadow: 0 0 8px #00f0ff, 0 0 16px rgba(0, 240, 255, 0.6);
+  animation: clockPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes clockPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.72);
+  }
+}
+
+/* ── Time ───────────────────────────────────────────────────────────────── */
+.clock-face {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  margin-top: 7px;
+  font-family: 'SFMono-Regular', 'Cascadia Mono', Consolas, 'Liberation Mono',
+    Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.5px;
+  color: #ecfdff;
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.7),
+    0 0 28px rgba(0, 240, 255, 0.35);
+}
+
+.clock-colon {
+  animation: clockBlink 1s step-end infinite;
+}
+
+@keyframes clockBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.18;
+  }
+}
+
+.clock-digit--sec {
+  font-size: 0.52em;
+  color: #8ff8ff;
+  opacity: 0.92;
+}
+
+.clock-meridiem {
+  margin-left: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #6ef2ff;
+}
+
+/* ── Date ───────────────────────────────────────────────────────────────── */
+.clock-date {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  margin-top: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: rgba(220, 252, 255, 0.9);
+}
+
+.clock-weekday {
+  color: #45f0ff;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
+}
+
+/* ── Responsive: never overlap the centred terminal ─────────────────────────
+   The terminal is centred with max-width 890px, so the free strip on the left
+   is (100vw - 890px)/2 wide. Each width tier below is chosen so that
+   18px (left margin) + width + 18px gap still fits inside that strip, checked
+   at the tier's narrowest window width:
+     200px needs vw >= 1362 | 170px needs >= 1302 | 140px needs >= 1242
+     116px needs vw >= 1194 — any narrower and it docks to the free
+     bottom-left corner (the plasma widget owns the bottom-right). */
+@media (max-width: 1361px) {
+  .digital-clock {
+    width: 170px;
+  }
+  .clock-face {
+    font-size: 26px;
+  }
+  .clock-meridiem {
+    margin-left: 6px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 1301px) {
+  .digital-clock {
+    width: 140px;
+  }
+  .clock-face {
+    font-size: 21px;
+  }
+  .clock-title {
+    display: none;
+  }
+  .clock-date {
+    font-size: 9.5px;
+    letter-spacing: 0.07em;
+  }
+  .clock-meridiem {
+    margin-left: 5px;
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 1241px) {
+  .digital-clock {
+    width: 116px;
+  }
+  .clock-face {
+    font-size: 17px;
+  }
+  .clock-meridiem {
+    margin-left: 4px;
+    font-size: 9px;
+  }
+  .clock-date {
+    font-size: 8.5px;
+    letter-spacing: 0.04em;
+  }
+  .clock-zone {
+    font-size: 8px;
+  }
+}
+
+/* Too little room beside the terminal — dock to the free bottom-left corner */
+@media (max-width: 1190px) {
+  .digital-clock {
+    top: auto;
+    bottom: 24px;
+    left: 18px;
+    width: auto;
+  }
+  .clock-panel {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    clip-path: polygon(
+      0 10px,
+      10px 0,
+      100% 0,
+      100% calc(100% - 10px),
+      calc(100% - 10px) 100%,
+      0 100%
+    );
+  }
+  .clock-head {
+    display: none;
+  }
+  .clock-face {
+    margin-top: 0;
+    font-size: 22px;
+  }
+  .clock-date {
+    margin-top: 0;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clock-colon,
+  .clock-pulse,
+  .clock-scan {
+    animation: none;
+  }
+}
