@@ -11,6 +11,7 @@ import {
   matchLocalCommand,
   runLocalCommand,
   describeAction,
+  describeMediaResult,
   checkBridge,
 } from '../services/commandActions';
 import {
@@ -18,6 +19,7 @@ import {
   stopScreenVision,
   grabScreenFrame,
 } from '../services/screenVision';
+import { refreshMediaState } from '../services/mediaControl';
 
 // ─── Speech helpers ──────────────────────────────────────────────────────────
 // Cap on kept log entries so long sessions never bloat the DOM.
@@ -716,8 +718,18 @@ const CommandTerminal = ({
     setIsGenerating(false);
 
     const result = await runLocalCommand(action);
+    // Media replies carry the real hardware percentages — speak those
+    // ("Volume set to 50%, Sir."), not the static pending copy.
+    const mediaCopy =
+      action.type === 'media'
+        ? describeMediaResult(action, result, isHindi)
+        : null;
     const outcome = result.ok
-      ? `${described.done}${result.opened ? ` → ${result.opened}` : ''}`
+      ? `${mediaCopy ? mediaCopy.done : described.done}${
+          result.opened ? ` → ${result.opened}` : ''
+        }`
+      : mediaCopy
+      ? mediaCopy.done
       : `⚠ ACTION FAILED // ${result.error}`;
     setCommandLogs((prev) =>
       prev.map((log) =>
@@ -732,7 +744,13 @@ const CommandTerminal = ({
       spokenTextRef.current = '';
       const tts = createTtsSession(langCode);
       ttsSessionRef.current = tts;
-      tts.push(result.ok ? described.speak : described.failSpeak);
+      tts.push(
+        mediaCopy
+          ? mediaCopy.speak
+          : result.ok
+          ? described.speak
+          : described.failSpeak
+      );
       tts.finish();
       if (isSpeakingRef.current) {
         closeWhenSilentRef.current = scheduleAutoClose;
@@ -773,6 +791,11 @@ const CommandTerminal = ({
       }
       lastDispatchedRef.current = { text: norm, at: now };
     }
+
+    // Keep the SYSTEM CONTROLS percentages honest — refresh in the background
+    // (also picks up volume changed outside JARVIS, e.g. laptop Fn keys).
+    // Fire-and-forget: never blocks or fails the prompt itself.
+    refreshMediaState();
 
     // Authoritative request id: callbacks from an older request are ignored.
     const id = ++requestIdRef.current;

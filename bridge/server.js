@@ -509,7 +509,7 @@ function groqProxy(req, res, send) {
     size += chunk.length;
     if (size > MAX_GROQ_BODY) {
       tooLarge = true;
-      send(res, 413, fail('Request body too large.'));
+      send(413, fail('Request body too large.'));
       abortUpstream();
       return;
     }
@@ -522,7 +522,6 @@ function groqProxy(req, res, send) {
     const key = groqKey();
     if (!key) {
       send(
-        res,
         500,
         fail(
           'No Groq API key found — add GROQ_API_KEY=<your key> to the .env file in the project folder.'
@@ -564,11 +563,145 @@ function groqProxy(req, res, send) {
         res.destroy();
         return;
       }
-      send(res, 502, fail(`Groq request failed: ${err.message}`));
+      send(502, fail(`Groq request failed: ${err.message}`));
     });
     upstream.end(body);
   });
 }
+
+// ─── Media worker: system volume + screen brightness ─────────────────────────
+// Browsers cannot touch system audio or the panel backlight, so those commands
+// run in a resident PowerShell worker (bridge/media-worker.ps1). It compiles
+// the Core Audio interop once (~1.5s, first command only) and then answers in
+// milliseconds; the bridge stops it after 2 minutes idle so it never sits in
+// RAM doing nothing.
+const MEDIA_IDLE_MS = 2 * 60 * 1000;
+const MEDIA_TIMEOUT_MS = 10000;
+let mediaWorker = null;
+let mediaIdleTimer = null;
+let mediaSeq = 1;
+let mediaBuffer = '';
+const mediaWaiters = new Map();
+
+const stopMediaWorker = () => {
+  if (mediaIdleTimer) {
+    clearTimeout(mediaIdleTimer);
+    mediaIdleTimer = null;
+  }
+  mediaBuffer = '';
+  const waiters = [...mediaWaiters.values()];
+  mediaWaiters.clear();
+  waiters.forEach((w) => {
+    clearTimeout(w.timer);
+    w.reject(new Error('Media worker stopped.'));
+  });
+  if (mediaWorker) {
+    try {
+      mediaWorker.kill();
+    } catch (e) {
+      /* noop */
+    }
+    mediaWorker = null;
+  }
+};
+
+const armMediaIdle = () => {
+  if (mediaIdleTimer) clearTimeout(mediaIdleTimer);
+  mediaIdleTimer = setTimeout(stopMediaWorker, MEDIA_IDLE_MS);
+};
+
+const ensureMediaWorker = () => {
+  if (mediaWorker) {
+    armMediaIdle();
+    return mediaWorker;
+  }
+  if (!IS_WIN) throw new Error('Media control needs Windows.');
+
+  const child = spawn(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      path.join(__dirname, 'media-worker.ps1'),
+    ],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }
+  );
+  mediaWorker = child;
+  mediaBuffer = '';
+  armMediaIdle();
+
+  child.on('error', () => {
+    if (mediaWorker === child) stopMediaWorker();
+  });
+  child.on('exit', () => {
+    if (mediaWorker !== child) return;
+    mediaWorker = null;
+    mediaBuffer = '';
+    const waiters = [...mediaWaiters.values()];
+    mediaWaiters.clear();
+    waiters.forEach((w) => {
+      clearTimeout(w.timer);
+      w.reject(new Error('Media worker exited.'));
+    });
+  });
+
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    mediaBuffer += chunk;
+    let idx;
+    while ((idx = mediaBuffer.indexOf('\n')) >= 0) {
+      const line = mediaBuffer.slice(0, idx).trim();
+      mediaBuffer = mediaBuffer.slice(idx + 1);
+      if (!line) continue;
+      let msg = null;
+      try {
+        msg = JSON.parse(line);
+      } catch (e) {
+        continue; // non-JSON noise — the real reply is a JSON line
+      }
+      const waiter = mediaWaiters.get(msg.id);
+      if (!waiter) continue;
+      mediaWaiters.delete(msg.id);
+      clearTimeout(waiter.timer);
+      waiter.resolve(msg);
+    }
+  });
+  // Compile noise lands on stderr — real failures come back as JSON replies.
+  child.stderr.on('data', () => {});
+
+  return child;
+};
+
+// Send one command to the worker; resolves with its JSON reply.
+const mediaRequest = (command) =>
+  new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = ensureMediaWorker();
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    const id = mediaSeq++;
+    const timer = setTimeout(() => {
+      mediaWaiters.delete(id);
+      stopMediaWorker(); // hung worker = broken worker, respawn next time
+      reject(new Error('Media control timed out.'));
+    }, MEDIA_TIMEOUT_MS);
+    mediaWaiters.set(id, { resolve, reject, timer });
+    try {
+      child.stdin.write(JSON.stringify({ id, ...command }) + '\n');
+    } catch (e) {
+      mediaWaiters.delete(id);
+      clearTimeout(timer);
+      stopMediaWorker();
+      reject(e);
+    }
+    armMediaIdle();
+  });
 
 // ─── HTTP server ────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
@@ -630,10 +763,96 @@ const server = http.createServer(async (req, res) => {
   // Groq chat proxy — the only path to the LLM, key attached server-side.
   if (url.pathname === '/groq') {
     if (req.method !== 'POST') {
-      send(res, 405, fail('Use POST /groq with a JSON body.'));
+      send(405, fail('Use POST /groq with a JSON body.'));
       return;
     }
     groqProxy(req, res, send);
+    return;
+  }
+
+  // ── Laptop media control: system volume + screen brightness ────────────
+  // GET  /media                 → current { volume, muted, brightness }
+  // POST /media {device, action, value?} → change it, reply with fresh state
+  if (url.pathname === '/media') {
+    const respond = (promise) => {
+      promise
+        .then((msg) => {
+          send(msg.ok ? 200 : 400, {
+            ok: !!msg.ok,
+            volume: typeof msg.volume === 'number' ? msg.volume : null,
+            muted: typeof msg.muted === 'boolean' ? msg.muted : null,
+            brightness:
+              typeof msg.brightness === 'number' ? msg.brightness : null,
+            error: msg.error || null,
+          });
+        })
+        .catch((err) => send(500, { ok: false, error: err.message }));
+    };
+
+    if (req.method === 'GET') {
+      respond(mediaRequest({ device: 'volume', action: 'get' }));
+      return;
+    }
+    if (req.method !== 'POST') {
+      send(
+        405,
+        fail('Use GET /media or POST /media {device, action, value}.')
+      );
+      return;
+    }
+
+    let body = '';
+    let size = 0;
+    let tooLarge = false;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 64 * 1024) {
+        tooLarge = true;
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on('error', () => {});
+    req.on('end', () => {
+      if (tooLarge) {
+        send(413, fail('Request body too large.'));
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(body || '{}');
+      } catch (e) {
+        send(400, fail('Invalid JSON body.'));
+        return;
+      }
+      const device = String(parsed.device || '');
+      const action = String(parsed.action || '');
+      if (device !== 'volume' && device !== 'brightness') {
+        send(400, fail("device must be 'volume' or 'brightness'."));
+        return;
+      }
+      const allowed = ['get', 'up', 'down', 'set', 'mute', 'unmute', 'toggle'];
+      if (!allowed.includes(action)) {
+        send(400, fail(`action must be one of: ${allowed.join(', ')}.`));
+        return;
+      }
+      const value =
+        parsed.value === undefined || parsed.value === null
+          ? null
+          : Number(parsed.value);
+      if (action === 'set' && !Number.isFinite(value)) {
+        send(400, fail('set needs a numeric value (0-100).'));
+        return;
+      }
+      respond(
+        mediaRequest({
+          device,
+          action,
+          value: Number.isFinite(value) ? Math.round(value) : null,
+        })
+      );
+    });
     return;
   }
 

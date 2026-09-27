@@ -48,6 +48,14 @@ The console footer shows `🖥️ BRIDGE ONLINE` / `🖥️ BRIDGE OFFLINE`.
 | "explain this screen" / "what's on my screen" / "describe the image" / "look at my screen" | Explains what is on the screen, including any image |
 | "can you see my screen" | Reports whether Screen Vision is on |
 | "stop seeing my screen" / "turn off screen vision" | Turns Screen Vision off |
+| "increase volume" / "volume up" / "वॉल्यूम बढ़ाओ" | System volume +5% (also unmutes) |
+| "decrease volume" / "volume down" / "वॉल्यूम कम करो" | System volume −5% |
+| "set volume to 50" / "50% volume" / "set volume to half" | Sets the exact percentage |
+| "mute the volume" / "unmute the volume" / "mute karo" | Mutes / unmutes the speakers |
+| "full volume" | Volume to 100% |
+| "what is the volume" / "volume kitna hai" | Reports the current volume |
+| "increase brightness" / "set brightness to 70" / "brightness down" | Screen backlight ±10% or to an exact % |
+| "what is the brightness" | Reports the current brightness |
 
 Anything the matcher does not recognise goes to Groq as a normal chat reply.
 Actions never round-trip through the model, so they answer instantly.
@@ -74,6 +82,27 @@ A frame is encoded only at the moment you ask for it — one screenshot per
 command, sent through the local bridge to the multimodal model
 (`qwen/qwen3.8-27b`) like any other chat, so the API key still never reaches
 the browser.
+
+## Laptop Media Control (volume + brightness)
+
+Browsers can never touch system audio or the panel backlight, so these
+commands run through the bridge: `POST /media` keeps a resident PowerShell
+worker (`bridge/media-worker.ps1`) that talks to Windows Core Audio (volume,
+mute) and WMI (`WmiSetBrightness`) directly. The interop compiles once on the
+first command (~1s) and every command after that answers in milliseconds; the
+worker stops itself after 2 minutes idle.
+
+- Works from **voice and the text command box** alike — same matcher, same
+  pipeline, reply spoken naturally: *"Volume set to 50%, Sir."* /
+  *"Brightness increased to 70%, Sir."* (Hindi included).
+- The **SYSTEM CONTROLS** panel in the top-right corner shows
+  `🔊 Volume: 50%` and `☀️ Brightness: 70%` live. It updates the instant a
+  command lands, and refreshes in the background on every prompt (so Fn-key
+  changes show up too) — there is no polling loop.
+- The panel also shows a `MUTED` badge while the speakers are muted, and thin
+  progress bars under each value.
+- Needs the bridge running (`npm start` auto-starts it); without it the
+  commands say so instead of failing silently.
 
 ## Groq API key (kept out of Git)
 
@@ -108,9 +137,16 @@ this repository.
   (`getDisplayMedia`, frame encoder, subscribe-able status)
 - `frontend/src/components/ScreenVision.js` — bottom-left SCREEN VISION switch
   with live preview; turns the whole feature on/off
+- `frontend/src/services/mediaControl.js` — media state store + `/media`
+  bridge client (volume/brightness commands, shared UI state)
+- `frontend/src/components/SystemControls.js` — top-right SYSTEM CONTROLS
+  readout (🔊 Volume / ☀️ Brightness, live percentages)
 - `bridge/server.js` — zero-dependency local bridge on `127.0.0.1:4777`
   (`/health`, `/open?kind=url|app|file|folder|find&target=…`, `/groq` — the
-  Groq proxy that attaches the API key from `.env`)
+  Groq proxy that attaches the API key from `.env` — and `/media` for
+  system volume/brightness)
+- `bridge/media-worker.ps1` — resident PowerShell worker (Core Audio + WMI)
+  behind `/media`; spawned on demand, idle-exits after 2 minutes
 - `bridge/ensure-bridge.js` — starts the bridge for `npm start` if it is down
 
 ## Troubleshooting

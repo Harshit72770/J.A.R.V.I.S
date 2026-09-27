@@ -636,11 +636,116 @@ function matchVisionCommand(raw) {
   return null;
 }
 
+// ─── Media control matcher: system volume + screen brightness ──────────────
+// Browsers cannot change either — these resolve to a {type:'media'} action
+// that the bridge executes through its PowerShell media worker.
+
+const VOL_WORDS = [
+  'volume',
+  'volum',
+  'loudness',
+  'aawaz',
+  'aawaj',
+  'avaz',
+  'sound',
+  'साउंड',
+  'आवाज़',
+  'आवाज',
+  'वॉल्यूम',
+  'वाल्यूम',
+];
+const BRI_WORDS = [
+  'brightness',
+  'bright',
+  'roshni',
+  'ब्राइटनेस',
+  'रोशनी',
+  'रोशन',
+  'चमक',
+  'प्रकाश',
+];
+
+// Devanagari has no ASCII word boundaries, so Hindi words use plain matches.
+const MEDIA_UP_RE =
+  /\b(?:increase|increased|raise|raised|up|higher|boost|badhao|badha\s+do|upar)\b|(?:बढ़ाओ|बढ़ा\s*दो|बढ़ाइए|बढ़ा\s*लो|ऊपर|ज़्यादा|ज्यादा)/;
+const MEDIA_DOWN_RE =
+  /\b(?:decrease|decrease|lower|lowered|down|reduce|reduced|less|kam|ghatao|ghata\s+do|niche)\b|(?:कम|घटाओ|घटा\s*दो|नीचे|कमी)/;
+const MEDIA_GET_RE =
+  /\b(?:what|what's|whats|how\s+much|current|status|level|kitna|kitni|kya|batao|batado|check)\b|(?:कितना|कितनी|क्या|बताओ|स्टेटस)/;
+
+function matchMediaCommand(raw) {
+  const s = normalize(raw)
+    .toLowerCase()
+    .replace(VISION_PREFIX, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return null;
+
+  let isVolume = VOL_WORDS.some((w) => hasWord(s, w));
+  const isBrightness = BRI_WORDS.some((w) => hasWord(s, w));
+  if (!isVolume && !isBrightness) {
+    // Bare "mute" / "mute karo" is almost always about the speakers.
+    const muteWord = /\b(?:mute|unmute)\b/.test(s) || /म्यूट/.test(s);
+    if (!muteWord) return null;
+    isVolume = true;
+  }
+  const device = isVolume ? 'volume' : 'brightness';
+
+  let m;
+
+  // ── SET a percentage: "set volume to 50" / "brightness 70%" / "50 percent volume"
+  m = s.match(
+    /(?:set|change|make|put|adjust|करो|कर\s*दो|कर\s*लो|सेट)?\s*(?:the\s+|my\s+|mera\s+|mere\s+)?(?:volume|loudness|brightness|sound|वॉल्यूम|ब्राइटनेस|आवाज़|आवाज|चमक)\s*(?:to|on|at|par|पर|को)?\s*(\d{1,3})\s*(?:%|percent|प्रतिशत)?/
+  );
+  if (!m) {
+    m = s.match(
+      /(\d{1,3})\s*(?:%|percent|प्रतिशत)\s*(?:the\s+|my\s+)?(?:volume|loudness|brightness|sound|वॉल्यूम|ब्राइटनेस)/
+    );
+  }
+  if (m) {
+    const pct = Math.max(0, Math.min(100, parseInt(m[1], 10)));
+    if (!Number.isNaN(pct)) {
+      return { type: 'media', device, action: 'set', value: pct };
+    }
+  }
+  if (/(?:set|change|करो|सेट)?\s*(?:the\s+)?(?:volume|brightness)\s*(?:to\s+)?(?:half|आधा|adha)/.test(s)) {
+    return { type: 'media', device, action: 'set', value: 50 };
+  }
+
+  // ── MUTE / UNMUTE (volume only — displays have no mute) ──────────────
+  if (device === 'volume') {
+    if (/\bun\s?mute\b|mute\s+off|अनम्यूट|म्यूट\s+हटाओ/.test(s)) {
+      return { type: 'media', device, action: 'unmute' };
+    }
+    if (/\bmute\b|\bsilence\b|म्यूट/.test(s)) {
+      return { type: 'media', device, action: 'mute' };
+    }
+  }
+
+  // ── REPORT: "what's the volume" / "brightness kitna hai" ─────────────
+  if (MEDIA_GET_RE.test(s)) {
+    return { type: 'media', device, action: 'get' };
+  }
+
+  // ── FULL / MAX → 100 ─────────────────────────────────────────────────
+  if (
+    /\b(?:full|maximum|max)\b|(?:पूरा|पूरी|फुल|फुली)/.test(s)
+  ) {
+    return { type: 'media', device, action: 'set', value: 100 };
+  }
+
+  // ── UP / DOWN (also unmutes on the way up, like the hardware keys) ───
+  if (MEDIA_UP_RE.test(s)) return { type: 'media', device, action: 'up' };
+  if (MEDIA_DOWN_RE.test(s)) return { type: 'media', device, action: 'down' };
+
+  return null;
+}
+
 /**
  * Returns { type, target } for an utterance J.A.R.V.I.S can execute locally,
  * or null when the text should go to the language model instead.
  * type: say | youtube | ytSearch | google | web | site | app | folder |
- *       find | path | vision
+ *       find | path | vision | media
  */
 export function matchLocalCommand(raw) {
   const text = normalize(raw);
@@ -649,6 +754,10 @@ export function matchLocalCommand(raw) {
   // ── 0) SCREEN VISION: read / explain / toggle what is on my screen ─────
   const visionAction = matchVisionCommand(text);
   if (visionAction) return visionAction;
+
+  // ── 0b) MEDIA: system volume + screen brightness ───────────────────────
+  const mediaAction = matchMediaCommand(text);
+  if (mediaAction) return mediaAction;
 
   let m;
 
@@ -829,6 +938,19 @@ export async function runLocalCommand(action) {
     return { ok: false, error: 'Screen vision runs in the HUD, not the bridge.' };
   }
 
+  // ── System volume / brightness ────────────────────────────────────────
+  // Executed by the bridge's resident media worker (PowerShell + Core Audio
+  // / WMI); its reply carries fresh hardware state, which mediaCommand
+  // applies to the shared UI store before resolving.
+  if (action.type === 'media') {
+    try {
+      const { mediaCommand } = await import('./mediaControl.js');
+      return await mediaCommand(action.device, action.action, action.value);
+    } catch (e) {
+      return { ok: false, error: 'Media control module failed to load.' };
+    }
+  }
+
   const online = await checkBridge(true);
 
   const link = linkUrlFor(action);
@@ -982,12 +1104,182 @@ export function describeAction(action, isHindi, langCode) {
           ? 'माफ़ कीजिए सर, स्क्रीन नहीं देख पाया।'
           : 'Sorry Sir, I could not look at the screen.',
       };
+    case 'media':
+      // The spoken copy is replaced by describeMediaResult once the bridge
+      // replies with the real percentages; this is only the pending line.
+      return {
+        pending:
+          action.device === 'volume'
+            ? '🔊 MEDIA // adjusting system volume…'
+            : '☀️ MEDIA // adjusting screen brightness…',
+        done:
+          action.device === 'volume'
+            ? '🔊 MEDIA // volume updated'
+            : '☀️ MEDIA // brightness updated',
+        speak: isHindi ? 'बदल रहा हूँ, सर।' : 'Adjusting, Sir.',
+        failSpeak: isHindi
+          ? 'माफ़ कीजिए सर, यह बदल नहीं पाया।'
+          : 'Sorry Sir, I could not change that.',
+      };
     default:
       return {
         pending: `⚡ ACTION // ${name}`,
         done: '✅ ACTION // Done',
         speak: isHindi ? 'कर रहा हूँ, सर।' : 'Done, Sir.',
         failSpeak: failed,
+      };
+  }
+}
+
+/**
+ * Result-aware copy for media actions — unlike describeAction, this runs
+ * AFTER the bridge replies, so it speaks the real percentages:
+ *   "Volume set to 50%, Sir." / "Brightness increased to 70%, Sir."
+ */
+export function describeMediaResult(action, result, isHindi) {
+  const failed = isHindi
+    ? 'माफ़ कीजिए सर, यह बदल नहीं पाया।'
+    : 'Sorry Sir, I could not change that.';
+  if (!result || !result.ok) {
+    return {
+      ok: false,
+      done: `⚠ ACTION FAILED // ${
+        result && result.error ? result.error : 'no reply from the Desktop Bridge'
+      }`,
+      speak: failed,
+    };
+  }
+
+  const v = typeof result.volume === 'number' ? result.volume : null;
+  const b = typeof result.brightness === 'number' ? result.brightness : null;
+  const pct = (n) => (n === null ? null : n);
+  const level = (n) => (n === null ? '' : ` ${n}%`);
+
+  if (action.device === 'brightness') {
+    const n = pct(b);
+    switch (action.action) {
+      case 'set':
+        return {
+          ok: true,
+          done: `☀️ MEDIA // Brightness${level(n)}`,
+          speak:
+            n === null
+              ? isHindi
+                ? 'ब्राइटनेस बदल दी, सर।'
+                : 'Brightness updated, Sir.'
+              : isHindi
+              ? `ब्राइटनेस ${n} परसेंट पर सेट कर दिया, सर।`
+              : `Brightness set to ${n}%, Sir.`,
+        };
+      case 'up':
+        return {
+          ok: true,
+          done: `☀️ MEDIA // Brightness${level(n)}`,
+          speak:
+            n === null
+              ? isHindi
+                ? 'ब्राइटनेस बढ़ा दी, सर।'
+                : 'Brightness increased, Sir.'
+              : isHindi
+              ? `ब्राइटनेस बढ़ाकर ${n} परसेंट कर दिया, सर।`
+              : `Brightness increased to ${n}%, Sir.`,
+        };
+      case 'down':
+        return {
+          ok: true,
+          done: `☀️ MEDIA // Brightness${level(n)}`,
+          speak:
+            n === null
+              ? isHindi
+                ? 'ब्राइटनेस घटा दी, सर।'
+                : 'Brightness decreased, Sir.'
+              : isHindi
+              ? `ब्राइटनेस घटाकर ${n} परसेंट कर दिया, सर।`
+              : `Brightness decreased to ${n}%, Sir.`,
+        };
+      default:
+        return {
+          ok: true,
+          done: `☀️ MEDIA // Brightness${level(n)}`,
+          speak:
+            n === null
+              ? isHindi
+                ? 'ब्राइटनेस की जानकारी नहीं मिली, सर।'
+                : 'I could not read the brightness, Sir.'
+              : isHindi
+              ? `ब्राइटनेस ${n} परसेंट है, सर।`
+              : `Brightness is ${n} percent, Sir.`,
+        };
+    }
+  }
+
+  const n = pct(v);
+  switch (action.action) {
+    case 'set':
+      return {
+        ok: true,
+        done: `🔊 MEDIA // Volume${level(n)}`,
+        speak:
+          n === null
+            ? isHindi
+              ? 'वॉल्यूम बदल दिया, सर।'
+              : 'Volume updated, Sir.'
+            : isHindi
+            ? `वॉल्यूम ${n} परसेंट पर सेट कर दिया, सर।`
+            : `Volume set to ${n}%, Sir.`,
+      };
+    case 'up':
+      return {
+        ok: true,
+        done: `🔊 MEDIA // Volume${level(n)}`,
+        speak:
+          n === null
+            ? isHindi
+              ? 'वॉल्यूम बढ़ा दिया, सर।'
+              : 'Volume increased, Sir.'
+            : isHindi
+            ? `वॉल्यूम बढ़ाकर ${n} परसेंट कर दिया, सर।`
+            : `Volume increased to ${n}%, Sir.`,
+      };
+    case 'down':
+      return {
+        ok: true,
+        done: `🔊 MEDIA // Volume${level(n)}`,
+        speak:
+          n === null
+            ? isHindi
+              ? 'वॉल्यूम घटा दिया, सर।'
+              : 'Volume decreased, Sir.'
+            : isHindi
+            ? `वॉल्यूम घटाकर ${n} परसेंट कर दिया, सर।`
+            : `Volume decreased to ${n}%, Sir.`,
+      };
+    case 'mute':
+      return {
+        ok: true,
+        done: '🔊 MEDIA // Muted',
+        speak: isHindi ? 'वॉल्यूम म्यूट कर दिया, सर।' : 'Volume muted, Sir.',
+      };
+    case 'unmute':
+      return {
+        ok: true,
+        done: `🔊 MEDIA // Unmuted${level(n)}`,
+        speak: isHindi ? 'वॉल्यूम चालू कर दिया, सर।' : 'Volume unmuted, Sir.',
+      };
+    default:
+      return {
+        ok: true,
+        done: `🔊 MEDIA // Volume${level(n)}${result.muted ? ' (muted)' : ''}`,
+        speak:
+          n === null
+            ? isHindi
+              ? 'वॉल्यूम की जानकारी नहीं मिली, सर।'
+              : 'I could not read the volume, Sir.'
+            : isHindi
+            ? `वॉल्यूम ${n} परसेंट है, सर।`
+            : `Volume is ${n} percent${
+                result.muted ? ' and it is muted' : ''
+              }, Sir.`,
       };
   }
 }

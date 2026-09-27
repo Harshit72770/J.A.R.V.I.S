@@ -5,6 +5,7 @@ import VoicePlasma from './components/VoicePlasma';
 import CommandTerminal from './components/CommandTerminal';
 import DigitalClock from './components/DigitalClock';
 import ScreenVision from './components/ScreenVision';
+import SystemControls from './components/SystemControls';
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES } from './constants/languages';
 import { getStoredModel } from './services/groqService';
 
@@ -86,6 +87,7 @@ function App() {
       />
       <DigitalClock />
       <ScreenVision />
+      <SystemControls />
       <CommandTerminal
         blobConfig={blobConfig}
         isListening={isListening}

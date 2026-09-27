@@ -1,0 +1,145 @@
+/* ─── SYSTEM CONTROLS — top-right volume / brightness readout ───────────────
+   Sits below the navbar's right edge (navbar is capped at 1350px, so the
+   corner is free on wide screens) and floats above the console's top-right
+   corner on narrower windows — same glass panel language as ScreenVision. */
+
+.system-controls {
+  position: fixed;
+  top: 96px;
+  right: 18px;
+  z-index: 960; /* above the console (950), below the navbar (1000) */
+  width: 212px;
+  padding: 9px 12px 10px;
+  background: rgba(4, 14, 20, 0.72);
+  border: 1px solid rgba(0, 240, 255, 0.24);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  clip-path: polygon(
+    0 10px,
+    10px 0,
+    100% 0,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    0 100%
+  );
+  user-select: none;
+}
+
+.sc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 7px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.16);
+  font-family: 'Orbitron', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  color: rgba(0, 240, 255, 0.92);
+}
+
+.sc-head-led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2eff8b;
+  box-shadow: 0 0 6px rgba(46, 255, 139, 0.9);
+}
+
+.sc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 13.5px;
+  letter-spacing: 0.03em;
+  color: rgba(200, 232, 245, 0.95);
+}
+
+.sc-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.sc-label {
+  flex: 1 1 auto;
+}
+
+.sc-value {
+  min-width: 44px;
+  text-align: right;
+  font-family: 'Orbitron', monospace;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #00f0ff;
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.35);
+}
+
+.sc-muted {
+  font-family: 'Orbitron', monospace;
+  font-size: 7.5px;
+  letter-spacing: 0.12em;
+  color: #ff7a86;
+  border: 1px solid rgba(255, 122, 134, 0.5);
+  padding: 1px 4px 0;
+  align-self: center;
+}
+
+.sc-bar {
+  height: 3px;
+  margin: 4px 0 8px;
+  overflow: hidden;
+  background: rgba(0, 240, 255, 0.12);
+}
+
+.sc-bar:last-child {
+  margin-bottom: 1px;
+}
+
+.sc-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(0, 240, 255, 0.55), #00f0ff);
+  transition: width 0.35s ease;
+}
+
+.sc-fill-bri {
+  background: linear-gradient(90deg, rgba(255, 200, 80, 0.55), #ffd257);
+}
+
+/* Narrow windows: the console's top-right corner slides under this panel —
+   shrink so it covers as little as possible. */
+@media (max-width: 1346px) {
+  .system-controls {
+    width: 186px;
+    padding: 8px 10px 9px;
+  }
+
+  .sc-row {
+    font-size: 12.5px;
+  }
+
+  .sc-value {
+    font-size: 11.5px;
+    min-width: 40px;
+  }
+}
+
+@media (max-width: 768px) {
+  .system-controls {
+    top: 88px;
+    right: 10px;
+    width: 168px;
+  }
+
+  .sc-head {
+    font-size: 8.5px;
+    letter-spacing: 0.14em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-fill {
+    transition: none;
+  }
+}
