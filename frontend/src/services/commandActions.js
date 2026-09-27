@@ -497,15 +497,158 @@ function classifyOpenTarget(target) {
   return { type: 'app', target: base, siteUrl: siteUrl || undefined };
 }
 
+// ─── Screen vision: read / explain / toggle the screen ──────────────────────
+// "read the text", "read my screen", "explain what's on my screen" → a vision
+// action. Gated by the SCREEN VISION switch (bottom-left): the browser only
+// grants screen access from a real click, so voice can turn the feature OFF
+// but can only ASK for permission to turn it ON — never pretend it happened.
+const VISION_PREFIX =
+  /^(?:(?:okay|ok|hey|hello|jarvis|जर्विस|please|plz|can you|could you|will you|just)\s+)+/i;
+
+const VISION_OFF_RE =
+  /^(?:stop|turn off|switch off|disable|hide|pause|kill|band|बंद)\b.*(?:see|seeing|watch|watching|look|looking|vision|screen)|^(?:don'?t|do not|never|मत)\s+(?:see|watch|look)\b|^(?:screen vision|screen access)\s+(?:off|band|बंद)/i;
+
+const VISION_STATUS_RE =
+  /^(?:are you|can you|do you|is it)\s+(?:seeing|watching|looking|see|look|watch)\b|^is\s+(?:the\s+)?screen vision\s+(?:on|off|live|active|working)\b|^(?:screen vision)\s+(?:on|off|live|active|working)\s*(?:hai|है)\s*$/i;
+
+const VISION_ON_RE =
+  /^(?:allow|enable|grant|start|turn on|switch on|give)\b.*(?:see|seeing|watch|watching|look|looking|vision|screen|display)|^(?:screen vision|screen access)\s+(?:on|चालू|शुरू)/i;
+
+function matchVisionCommand(raw) {
+  const rawLower = normalize(raw).toLowerCase();
+  const s = rawLower
+    .replace(VISION_PREFIX, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return null;
+
+  // "screen" words (Hindi too) — desktop/window deliberately excluded so
+  // "show me my desktop" still opens the folder, as it always did.
+  const strongScreen = [
+    'screen',
+    'display',
+    'monitor',
+    'screenshot',
+    'स्क्रीन',
+    'मॉनिटर',
+    'डिस्प्ले',
+    'पर्दा',
+    'पर्दे',
+    'स्क्रीनशॉट',
+  ].some((w) => hasWord(s, w));
+
+  const imageWord = [
+    'image',
+    'images',
+    'picture',
+    'pictures',
+    'photo',
+    'photos',
+    'diagram',
+    'drawing',
+    'इमेज',
+    'तस्वीर',
+    'फोटो',
+    'चित्र',
+  ].some((w) => hasWord(s, w));
+
+  const seeingCtx =
+    strongScreen || imageWord || /\b(?:my|your|this) screen\b/.test(s);
+
+  // Status is matched against the RAW text: the politeness prefix ("can you")
+  // is part of the question and must not be stripped before it is recognised.
+  if (VISION_STATUS_RE.test(rawLower) && seeingCtx)
+    return { type: 'vision', mode: 'status' };
+  if (VISION_OFF_RE.test(s)) return { type: 'vision', mode: 'off' };
+  if (VISION_ON_RE.test(s)) return { type: 'vision', mode: 'on' };
+
+  // "what does my screen say" / "what does this image show"
+  const whatDoes = s.match(
+    /^(?:what does|what do|what's in|whats in)\s+(?:my|the|this|these|your)?\s*(screen|display|image|picture|photo|text|page|window)\s+(say|says|read|show|shows|contain|contains|look|looks)/
+  );
+  if (whatDoes) {
+    const second = whatDoes[2];
+    return {
+      type: 'vision',
+      mode: /^(?:say|says|read|contain)/.test(second) ? 'read' : 'explain',
+    };
+  }
+
+  // ── READ: "read the text" / "read my screen" / "स्क्रीन पढ़ो" ──────────
+  const readNoun = [
+    'text',
+    'texts',
+    'word',
+    'words',
+    'writing',
+    'note',
+    'notes',
+    'message',
+    'messages',
+    'paragraph',
+    'page',
+    'content',
+    'list',
+    'document',
+    'documents',
+    'टेक्स्ट',
+    'शब्द',
+    'लिखा',
+    'नोट',
+    'संदेश',
+  ].some((w) => hasWord(s, w));
+  const readIntent =
+    hasWord(s, 'read') || /(पढ़ो|पढ़िए|पढ़िये|पढ़\s*दो|पढ़ना)/.test(s);
+  const bareRead =
+    /^(?:read|read it|read this|read that|read out|read aloud|read the screen|पढ़ो|पढ़िए|पढ़ दो)$/.test(
+      s
+    );
+  if (readIntent && (bareRead || readNoun || strongScreen)) {
+    return { type: 'vision', mode: 'read' };
+  }
+
+  // ── EXPLAIN: "explain this screen" / "what's on my screen" ─────────────
+  const explainVerb =
+    /^(?:explain|describe|visuali[sz]e|analy[sz]e|interpret|summar(?:i|iz)e|break down|tell me about|समझाओ|व्याख्या)/.test(
+      s
+    );
+  const whatQuery =
+    /^(?:what(?:'s|’s| is| are| was| were)|whats|what do you see|what can you see|what'?s there)/.test(
+      s
+    );
+  const lookVerb = /^(?:look at|look|see|watch|inspect|check out)\b/.test(s);
+  const specificImage =
+    /\b(?:this|that|these|those|the|is|my)\s+(?:image|picture|photo|diagram|screenshot)\b/.test(
+      s
+    );
+
+  if (explainVerb && (strongScreen || imageWord))
+    return { type: 'vision', mode: 'explain' };
+  if (whatQuery && (strongScreen || imageWord))
+    return { type: 'vision', mode: 'explain' };
+  if (/(?:क्या है|kya hai|क्या दिख)/.test(s) && strongScreen)
+    return { type: 'vision', mode: 'explain' };
+  if (lookVerb && (strongScreen || (imageWord && specificImage)))
+    return { type: 'vision', mode: 'explain' };
+  if (/^(?:show|show me|show us)\b/.test(s) && strongScreen)
+    return { type: 'vision', mode: 'explain' };
+
+  return null;
+}
+
 /**
  * Returns { type, target } for an utterance J.A.R.V.I.S can execute locally,
  * or null when the text should go to the language model instead.
  * type: say | youtube | ytSearch | google | web | site | app | folder |
- *       find | path
+ *       find | path | vision
  */
 export function matchLocalCommand(raw) {
   const text = normalize(raw);
   if (!text) return null;
+
+  // ── 0) SCREEN VISION: read / explain / toggle what is on my screen ─────
+  const visionAction = matchVisionCommand(text);
+  if (visionAction) return visionAction;
 
   let m;
 
@@ -680,6 +823,11 @@ export async function runLocalCommand(action) {
   // Date / day / time / identity are fixed local copy — nothing to execute,
   // and no reason to wait on the bridge.
   if (action.type === 'say') return { ok: true };
+  // Screen vision owns its own pipeline (live frame + streaming reply) and
+  // must never be dispatched to the bridge.
+  if (action.type === 'vision') {
+    return { ok: false, error: 'Screen vision runs in the HUD, not the bridge.' };
+  }
 
   const online = await checkBridge(true);
 
@@ -822,6 +970,17 @@ export function describeAction(action, isHindi, langCode) {
         done: '✅ ACTION // File opened',
         speak: isHindi ? 'फ़ाइल खोल रहा हूँ, सर।' : 'Opening your file, Sir.',
         failSpeak: failed,
+      };
+    case 'vision':
+      return {
+        pending: '👁 SCREEN VISION // capturing a frame…',
+        done: '✅ SCREEN VISION // screen analyzed',
+        speak: isHindi
+          ? 'स्क्रीन देख रहा हूँ, सर।'
+          : 'Looking at your screen, Sir.',
+        failSpeak: isHindi
+          ? 'माफ़ कीजिए सर, स्क्रीन नहीं देख पाया।'
+          : 'Sorry Sir, I could not look at the screen.',
       };
     default:
       return {

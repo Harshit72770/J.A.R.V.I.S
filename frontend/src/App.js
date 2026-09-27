@@ -4,6 +4,7 @@ import Navbar from './components/Navbar';
 import VoicePlasma from './components/VoicePlasma';
 import CommandTerminal from './components/CommandTerminal';
 import DigitalClock from './components/DigitalClock';
+import ScreenVision from './components/ScreenVision';
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES } from './constants/languages';
 import { getStoredModel } from './services/groqService';
 
@@ -84,6 +85,7 @@ function App() {
         onGroqModelChange={updateGroqModel}
       />
       <DigitalClock />
+      <ScreenVision />
       <CommandTerminal
         blobConfig={blobConfig}
         isListening={isListening}

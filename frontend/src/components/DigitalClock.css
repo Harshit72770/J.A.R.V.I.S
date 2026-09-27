@@ -254,9 +254,14 @@
 @media (max-width: 1190px) {
   .digital-clock {
     top: auto;
-    bottom: 24px;
+    /* The SCREEN VISION switch owns the very bottom-left corner; sit above it */
+    bottom: 124px;
     left: 18px;
     width: auto;
+  }
+  /* Live preview makes the vision panel taller — move up with it */
+  body.sv-panel-live .digital-clock {
+    bottom: 252px;
   }
   .clock-panel {
     display: flex;

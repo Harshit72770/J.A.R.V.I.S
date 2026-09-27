@@ -487,7 +487,9 @@ const groqKey = () => {
   return process.env.GROQ_API_KEY || fromFile;
 };
 
-const MAX_GROQ_BODY = 512 * 1024;
+// Screenshots ride along base64-encoded, so vision requests are a few MB —
+// allow that while still rejecting anything absurd.
+const MAX_GROQ_BODY = 8 * 1024 * 1024;
 
 function groqProxy(req, res, send) {
   const chunks = [];

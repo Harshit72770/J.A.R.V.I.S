@@ -36,6 +36,12 @@ export const GROQ_MODELS = [
 export const BRIDGE_URL = 'http://127.0.0.1:4777';
 export const GROQ_PROXY_URL = `${BRIDGE_URL}/groq`;
 
+// Model used for screen vision ("read my screen" / "explain this screen").
+// Verified to accept image input on this key — the picture rides along in the
+// normal /groq payload, so it is proxied through the bridge like chat and no
+// key or frame-handling code is ever shipped to the client.
+export const VISION_MODEL = 'qwen/qwen3.8-27b';
+
 export const getStoredModel = () => {
   return (
     localStorage.getItem('jarvis_groq_model') || 'qwen/qwen3.8-27b'

@@ -5,6 +5,7 @@ import {
   GROQ_MODELS,
   streamGroqChat,
   buildJarvisSystemPrompt,
+  VISION_MODEL,
 } from '../services/groqService';
 import {
   matchLocalCommand,
@@ -12,6 +13,11 @@ import {
   describeAction,
   checkBridge,
 } from '../services/commandActions';
+import {
+  isScreenVisionLive,
+  stopScreenVision,
+  grabScreenFrame,
+} from '../services/screenVision';
 
 // ─── Speech helpers ──────────────────────────────────────────────────────────
 // Cap on kept log entries so long sessions never bloat the DOM.
@@ -413,12 +419,260 @@ const CommandTerminal = ({
     }, 5000);
   }, [isPinned]);
 
+  // ── SCREEN VISION ("read the screen" / "explain this screen") ──────────
+  // Runs only while the bottom-left SCREEN VISION switch is ON — the browser
+  // grants screen access from that click, never from a voice command. One
+  // frame is encoded per request and sent through the local bridge to the
+  // multimodal model; the answer then streams through the same sentence-TTS
+  // and 5-seconds-after-speech auto-close pipeline as a normal reply.
+  const handleVisionAction = async (action, spokenText, langCode) => {
+    const stamp = () =>
+      new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    const hasDevanagari = /[\u0900-\u097F]/.test(spokenText);
+    const isHindi =
+      hasDevanagari || (langCode || '').toLowerCase().startsWith('hi');
+    const langObj = SUPPORTED_LANGUAGES.find((l) => l.code === langCode);
+    const badge = hasDevanagari
+      ? '\uD83C\uDDEE\uD83C\uDDF3 HI'
+      : langObj
+      ? `${langObj.flag} ${langObj.code.split('-')[0].toUpperCase()}`
+      : 'VOICE';
+
+    // ── Fixed copy for every path that must NOT touch the model ─────────
+    const copy = {
+      off: isHindi
+        ? 'स्क्रीन विज़न बंद है, सर। अब मैं आपकी स्क्रीन नहीं देख सकता।'
+        : 'Screen vision is off, Sir — I can no longer see your screen.',
+      needSwitch: isHindi
+        ? 'स्क्रीन विज़न बंद है। नीचे बाएँ कोने का SCREEN VISION स्विच चालू कीजिए, फिर दोबारा कहिए, सर।'
+        : 'Screen vision is off. Please turn on the SCREEN VISION switch at the bottom-left corner, then ask me again, Sir.',
+      grantByHand: isHindi
+        ? 'स्क्रीन देखने की अनुमति सिर्फ आप दे सकते हैं — नीचे बाएँ कोने का SCREEN VISION स्विच चालू कीजिए, सर।'
+        : 'Only you can allow me to see your screen — please turn on the SCREEN VISION switch at the bottom-left corner, Sir.',
+      alreadyOn: isHindi
+        ? 'स्क्रीन विज़न पहले से चालू है, सर।'
+        : 'Screen vision is already on, Sir.',
+      statusOn: isHindi
+        ? 'स्क्रीन विज़न चालू है, सर — मैं आपकी स्क्रीन देख सकता हूँ।'
+        : 'Screen vision is on, Sir — I can see your screen.',
+      statusOff: isHindi
+        ? 'स्क्रीन विज़न बंद है, सर।'
+        : 'Screen vision is off, Sir.',
+      captureFailed: isHindi
+        ? 'स्क्रीन कैप्चर नहीं हो पाया, सर। दोबारा कोशिश कीजिए।'
+        : 'I could not capture the screen, Sir. Please try again.',
+    };
+
+    const live = isScreenVisionLive();
+    let localMsg = null;
+
+    if (action.mode === 'off') {
+      stopScreenVision();
+      localMsg = copy.off;
+    } else if (action.mode === 'on') {
+      localMsg = live ? copy.alreadyOn : copy.grantByHand;
+    } else if (action.mode === 'status') {
+      localMsg = live ? copy.statusOn : copy.statusOff;
+    } else if (!live) {
+      localMsg = copy.needSwitch;
+    }
+
+    // ── Fixed reply: log it, speak it, close 5s after the speech ────────
+    const replyLocally = (text) => {
+      const userLogId = uidRef.current++;
+      const replyLogId = uidRef.current++;
+      setCommandLogs((prev) =>
+        [
+          ...prev,
+          {
+            id: userLogId,
+            text: spokenText,
+            sender: 'VOICE_USER',
+            langBadge: badge,
+            timestamp: stamp(),
+          },
+          {
+            id: replyLogId,
+            text,
+            sender: 'JARVIS',
+            timestamp: stamp(),
+          },
+        ].slice(-LOG_LIMIT)
+      );
+      setIsOpen(true);
+      setIsGenerating(false);
+
+      if (voiceFeedbackEnabledRef.current && 'speechSynthesis' in window) {
+        spokenTextRef.current = '';
+        const tts = createTtsSession(langCode);
+        ttsSessionRef.current = tts;
+        tts.push(text);
+        tts.finish();
+        if (isSpeakingRef.current) {
+          closeWhenSilentRef.current = scheduleAutoClose;
+        } else {
+          closeWhenSilentRef.current = null;
+          scheduleAutoClose();
+        }
+      } else {
+        closeWhenSilentRef.current = null;
+        scheduleAutoClose();
+      }
+    };
+
+    if (localMsg) {
+      replyLocally(localMsg);
+      return;
+    }
+
+    // ── Live: encode one frame, then stream the model's answer ──────────
+    let frame;
+    try {
+      frame = grabScreenFrame();
+    } catch (e) {
+      replyLocally(copy.captureFailed);
+      return;
+    }
+
+    const myId = requestIdRef.current;
+    const isRead = action.mode === 'read';
+    const userLogId = uidRef.current++;
+    const jarvisLogId = uidRef.current++;
+
+    const messages = [
+      {
+        role: 'system',
+        content: isRead
+          ? 'You are an exact screen reader. Transcribe ALL text visible in the given screenshot exactly as written, in natural reading order. Never add commentary, greetings or "Sir" — output the text only. If there is no readable text, output exactly: No readable text on screen.'
+          : buildJarvisSystemPrompt(langCode),
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: isRead
+              ? 'Read all the text on this screen now.'
+              : 'This is a live screenshot of my computer screen. Look at it and explain what is on it — describe any images, diagrams, photos or apps you see and what they show. Keep it short and natural.',
+          },
+          { type: 'image_url', image_url: { url: frame } },
+        ],
+      },
+    ];
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    spokenTextRef.current = '';
+    const tts = createTtsSession(langCode);
+    ttsSessionRef.current = tts;
+
+    setCommandLogs((prev) =>
+      [
+        ...prev,
+        {
+          id: userLogId,
+          text: spokenText,
+          sender: 'VOICE_USER',
+          langBadge: badge,
+          timestamp: stamp(),
+        },
+        {
+          id: jarvisLogId,
+          text: isRead
+            ? '👁 SCREEN VISION // reading the text on your screen…'
+            : '👁 SCREEN VISION // looking at your screen…',
+          sender: 'JARVIS',
+          isStreaming: true,
+          modelBadge: 'VISION',
+          timestamp: stamp(),
+        },
+      ].slice(-LOG_LIMIT)
+    );
+    setIsOpen(true);
+    setIsGenerating(false);
+
+    let accumulatedText = '';
+    let finalText = null;
+
+    try {
+      await streamGroqChat(
+        messages,
+        (token, full) => {
+          if (myId !== requestIdRef.current) return; // superseded by barge-in
+          accumulatedText = full;
+          tts.push(full); // speak sentences as they complete
+          scheduleLogFlush(jarvisLogId, full); // batched UI update
+        },
+        {
+          model: VISION_MODEL,
+          temperature: isRead ? 0.1 : 0.5,
+          maxTokens: isRead ? 700 : 400,
+          signal: controller.signal,
+        }
+      );
+      finalText = accumulatedText;
+    } catch (err) {
+      const superseded = myId !== requestIdRef.current || err.name === 'AbortError';
+      if (!superseded) {
+        console.error('Screen vision error:', err);
+        const errorFeedback = `⚠ SCREEN VISION FAILED // ${
+          err.message || 'could not analyze the screen'
+        }`;
+        setCommandLogs((prev) =>
+          prev.map((log) =>
+            log.id === jarvisLogId
+              ? { ...log, text: errorFeedback, isStreaming: false, isError: true }
+              : log
+          )
+        );
+      }
+    } finally {
+      const superseded = myId !== requestIdRef.current;
+      if (superseded) {
+        tts.cancel();
+        if (ttsSessionRef.current === tts) ttsSessionRef.current = null;
+      } else {
+        tts.finish(); // speak whatever is left of the answer
+        if (finalText !== null) {
+          setCommandLogs((prev) =>
+            prev.map((log) =>
+              log.id === jarvisLogId
+                ? { ...log, text: finalText, isStreaming: false }
+                : log
+            )
+          );
+        }
+        setIsGenerating(false);
+        if (isSpeakingRef.current) {
+          closeWhenSilentRef.current = scheduleAutoClose;
+        } else {
+          closeWhenSilentRef.current = null;
+          scheduleAutoClose();
+        }
+      }
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+    }
+  };
+
   // ── LOCAL ACTIONS (desktop / web) ────────────────────────────────────
   // "open youtube / search X / play X / open notepad / open my resume file"
   // are executed directly — no model round-trip, so they answer instantly.
   // The console then closes 5s AFTER the spoken confirmation, exactly like a
   // full reply.
   const handleLocalAction = async (action, spokenText, langCode) => {
+    // Screen vision answers with a full model reply (and owns its frame +
+    // logging pipeline), so it never goes through the one-line confirmation.
+    if (action.type === 'vision') {
+      await handleVisionAction(action, spokenText, langCode);
+      return;
+    }
+
     const stamp = () =>
       new Date().toLocaleTimeString([], {
         hour: '2-digit',
