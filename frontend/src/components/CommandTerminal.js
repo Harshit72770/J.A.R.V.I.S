@@ -29,8 +29,15 @@ const LOG_LIMIT = 200;
 // silently failed to open the microphone (that failure used to be invisible).
 const START_WATCHDOG_MS = 3000;
 
-// Backoff between restart attempts, and the point where we tell the user.
+// Backoff between restart attempts. This is a backoff ladder ONLY — hitting
+// its top rung must never stop us from retrying (see rec.onend).
 const RESTART_DELAYS = [100, 400, 1000, 2000];
+
+// Liveness net: how often we check for a silently dead recognizer, and how
+// long it may stay completely event-free while the mic hardware still hears
+// voice activity (Chrome's known "running but silent" wedge).
+const LIVENESS_CHECK_MS = 5000;
+const EVENT_STARVATION_MS = 10000;
 
 // User-facing messages per Web Speech API error code. null = routine, restart
 // silently. Nothing is swallowed any more: an invisible failure is what made
@@ -125,6 +132,7 @@ const CommandTerminal = ({
   const recognitionRef = useRef(null);
   const isStartedRef = useRef(false);
   const shouldListenRef = useRef(isListening);
+  const noiseGateActiveRef = useRef(noiseGateActive);
   const restartTimerRef = useRef(null);
   const autoCloseTimerRef = useRef(null);
   const silenceTimerRef = useRef(null);
@@ -158,6 +166,7 @@ const CommandTerminal = ({
 
   // Keep refs in sync with latest state/props
   useEffect(() => { shouldListenRef.current = isListening; }, [isListening]);
+  useEffect(() => { noiseGateActiveRef.current = noiseGateActive; }, [noiseGateActive]);
   useEffect(() => { selectedLangRef.current = selectedLanguage; }, [selectedLanguage]);
   useEffect(() => { groqModelRef.current = groqModel; }, [groqModel]);
   useEffect(() => { commandLogsRef.current = commandLogs; }, [commandLogs]);
@@ -1047,7 +1056,15 @@ const CommandTerminal = ({
     let recognition = null;
     let watchdog = null;
     let pendingStart = false;
-    let attempts = 0; // failures since the last real result
+    // Failures since the last successful start/result. This is a BACKOFF
+    // LEVEL, never a death sentence: it resets on onstart/onresult and the
+    // restart delay clamps at the top of RESTART_DELAYS, so recovery is
+    // always automatic (the old "4 strikes and the mic is dead until you
+    // toggle it" ratchet was the "stops responding after 2-3 commands" bug).
+    let attempts = 0;
+    // Timestamp of the last event of ANY kind from the recognizer — used to
+    // detect Chrome's silent-death state (running, but never speaking again).
+    let lastRecEventAt = Date.now();
 
     const clearWatchdog = () => {
       if (watchdog) {
@@ -1062,6 +1079,23 @@ const CommandTerminal = ({
         restartTimerRef.current = null;
         attemptStart();
       }, delay);
+    };
+
+    // Chrome sometimes neither fires onstart nor onerror (mic held by another
+    // app, or start() raced an internal stop and threw InvalidStateError while
+    // the instance never actually runs). Without this watchdog the component
+    // sat on isStartedRef=true forever and never recovered — the mic simply
+    // died with no message. Any real event (onstart) disarms it.
+    const armStartWatchdog = () => {
+      clearWatchdog();
+      watchdog = setTimeout(() => {
+        watchdog = null;
+        if (disposed || !pendingStart) return;
+        console.warn('SpeechRecognition never started — recreating instance');
+        attempts += 1;
+        dropInstance();
+        attemptStart();
+      }, START_WATCHDOG_MS);
     };
 
     const dropInstance = () => {
@@ -1091,15 +1125,20 @@ const CommandTerminal = ({
 
       rec.onstart = () => {
         if (disposed) return;
+        lastRecEventAt = Date.now();
         clearWatchdog();
         pendingStart = false;
         isStartedRef.current = true;
+        // A successful start proves the sensor recovered — forgive every
+        // earlier failure so one bad stretch can never ratchet to death.
+        attempts = 0;
         setRecognitionActive(true);
         setSpeechError(null);
       };
 
       rec.onerror = (event) => {
         if (disposed) return;
+        lastRecEventAt = Date.now();
         const message = RECOGNITION_ERRORS[event.error];
         if (message) {
           console.warn('Speech recognition error:', event.error);
@@ -1111,22 +1150,32 @@ const CommandTerminal = ({
 
       rec.onend = () => {
         if (disposed) return;
+        lastRecEventAt = Date.now();
         clearWatchdog();
         pendingStart = false;
         isStartedRef.current = false;
         setRecognitionActive(false);
         if (!shouldListenRef.current) return;
-        if (attempts >= RESTART_DELAYS.length) {
-          setSpeechError(
-            'Speech sensor is not responding — toggle the mic off/on (or reload) to retry.'
-          );
-          return;
-        }
+        // NEVER give up permanently. RESTART_DELAYS is only a backoff ladder
+        // and the index clamps at its top, so we keep retrying forever at
+        // 2s intervals until Chrome comes back. The previous
+        // `attempts >= RESTART_DELAYS.length` branch stopped restarting until
+        // a manual mic toggle/reload: a ~3-second burst of transient errors
+        // (network blip, mic contention) after command 2 or 3 therefore killed
+        // the microphone for the entire session — the reported bug.
         const delay = RESTART_DELAYS[Math.min(attempts, RESTART_DELAYS.length - 1)];
         scheduleAttempt(delay);
       };
 
       rec.onresult = (event) => {
+        // ANY recognition traffic proves the pipeline is alive — reset the
+        // failure backoff BEFORE the echo-suppression early-return below.
+        // (The reset used to sit under `if (isSpeakingRef)`, so results
+        // arriving while JARVIS was talking could not forgive earlier
+        // errors and failures stacked up across commands.)
+        attempts = 0;
+        lastRecEventAt = Date.now();
+
         let interim = '';
         let finalized = '';
 
@@ -1159,9 +1208,6 @@ const CommandTerminal = ({
           }
           return;
         }
-
-        // Proof the pipeline works — resets the failure backoff
-        attempts = 0;
 
         setIsOpen(true);
         if (autoCloseTimerRef.current) {
@@ -1202,12 +1248,6 @@ const CommandTerminal = ({
     // Starts recognition, arms the watchdog, and recreates a dead instance.
     const attemptStart = () => {
       if (disposed || !shouldListenRef.current || isStartedRef.current) return;
-      if (attempts >= RESTART_DELAYS.length) {
-        setSpeechError(
-          'Speech sensor is not responding — toggle the mic off/on (or reload) to retry.'
-        );
-        return;
-      }
       if (!recognition) buildRecognition();
 
       pendingStart = true;
@@ -1217,9 +1257,23 @@ const CommandTerminal = ({
         isStartedRef.current = true;
       } catch (e) {
         if (e.name === 'InvalidStateError') {
-          // Already running — that is a success, not a failure
-          pendingStart = false;
-          isStartedRef.current = true;
+          // Chrome says "already started" — usually true, but if that start
+          // was phantom (it raced an internal stop) NO event will ever
+          // arrive, and treating this as pure success used to leave
+          // isStartedRef=true blocking every future attempt: a silent,
+          // permanent wedge. Keep pendingStart set and let the watchdog
+          // rebuild the instance when nothing happens.
+          clearWatchdog();
+          watchdog = setTimeout(() => {
+            watchdog = null;
+            if (disposed || !pendingStart) return;
+            console.warn(
+              'SpeechRecognition InvalidStateError start never fired — recreating instance'
+            );
+            attempts += 1;
+            dropInstance();
+            attemptStart();
+          }, START_WATCHDOG_MS);
           return;
         }
         console.warn('Recognition start exception:', e);
@@ -1233,16 +1287,38 @@ const CommandTerminal = ({
 
       // Chrome sometimes neither fires onstart nor onerror (mic held by
       // another app) — without this the UI sat on "CONNECTING" forever.
-      clearWatchdog();
-      watchdog = setTimeout(() => {
-        watchdog = null;
-        if (disposed || !pendingStart) return;
-        console.warn('SpeechRecognition never started — recreating instance');
-        attempts += 1;
-        dropInstance();
-        attemptStart();
-      }, START_WATCHDOG_MS);
+      armStartWatchdog();
     };
+
+    // ── Liveness net ────────────────────────────────────────────────────────
+    // Chrome occasionally wedges a recognizer for good: it reports success
+    // but never emits another event. The Web Speech API exposes no way to
+    // query that, so we watch for it: while the shared mic's noise gate
+    // hears activity yet the recognizer has been completely event-free for
+    // EVENT_STARVATION_MS, rebuild the instance (the documented recovery).
+    // A healthy recognizer always emits results/no-speech events during
+    // activity, so this never fires in normal operation.
+    const livenessTimer = setInterval(() => {
+      if (disposed || !shouldListenRef.current) return;
+      if (!isStartedRef.current) {
+        // Orphaned: should be listening, but nothing is running and no
+        // restart timer / pending start / watchdog exists to fix it.
+        if (!restartTimerRef.current && !pendingStart && !watchdog) {
+          console.warn(
+            'SpeechRecognition orphaned (idle with no retry pending) — restarting'
+          );
+          attemptStart();
+        }
+        return;
+      }
+      if (!noiseGateActiveRef.current) return;
+      if (Date.now() - lastRecEventAt < EVENT_STARVATION_MS) return;
+      console.warn(
+        'SpeechRecognition silent while voice present — recycling instance'
+      );
+      dropInstance();
+      attemptStart();
+    }, LIVENESS_CHECK_MS);
 
     startRecognitionRef.current = attemptStart;
     stopRecognitionRef.current = () => {
@@ -1276,6 +1352,7 @@ const CommandTerminal = ({
     return () => {
       disposed = true;
       clearWatchdog();
+      clearInterval(livenessTimer);
       if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
       if (autoCloseTimerRef.current) clearTimeout(autoCloseTimerRef.current);
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
