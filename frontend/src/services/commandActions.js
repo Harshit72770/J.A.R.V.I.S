@@ -835,9 +835,11 @@ function matchBrowserCommand(raw) {
   }
 
   // ── Open/play Nth result of the previous search ─────────────────────────
-  // ("play the first result" resolves the stored web/YouTube search context.)
+  // "open the first result|link" / "play this first song|video" resolve the
+  // stored web/YouTube search context. Optional trailing "of the …" noise
+  // ("open the first link of the website") is ignored.
   m = text.match(
-    /^(?:open|play)\s+(?:the\s+)?(first|second|third|fourth|fifth|last|(\d+)(?:st|nd|rd|th)?)\s+result$/i
+    /^(?:open|play|show)\s+(?:(?:this|the)\s+)?(first|second|third|fourth|fifth|last|(\d+)(?:st|nd|rd|th)?)\s+(?:result|link|song|video|track|page|option)(?:\s+(?:of|from)\s+(?:the\s+)?(?:search|results?|page|website|list))?$/i
   );
   if (m) {
     const ordinal = {
@@ -855,12 +857,14 @@ function matchBrowserCommand(raw) {
       index: ordinal[key] !== undefined ? ordinal[key] : parseInt(m[2], 10),
     };
   }
-  m = text.match(/^(?:open|play)\s+result(?:\s+number)?\s+(\d+)$/i);
+  m = text.match(
+    /^(?:open|play|show)\s+(?:result|link|song|video|track)\s+(?:number\s+)?(\d+)$/i
+  );
   if (m) {
     return { type: 'browser', action: 'openResult', index: parseInt(m[1], 10) };
   }
   m = text.match(
-    /^(pehla|dusra|teesra|chautha|paanchva|last)\s+result\s+(?:kholo|open\s+karo)$/i
+    /^(pehla|dusra|teesra|chautha|paanchva|last)\s+(?:result|link|gaana|song)\s+(?:kholo|open\s+karo|chalao)$/i
   );
   if (m) {
     const ordinal = {

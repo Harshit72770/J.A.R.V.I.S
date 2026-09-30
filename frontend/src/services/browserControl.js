@@ -247,21 +247,19 @@ export async function googleSearch(query) {
   const q = String(query || '').trim().slice(0, 200);
   if (!q) return { ok: false, error: 'The search query was empty.' };
   const r = await post('googleSearch', { query: q });
-  if (r.ok) {
-    recordBrowserAction('googleSearch', r.opened, 'jarvis-browser');
-    await quietContextSearch(q, null); // web_search tool — independent of Google
-    return r;
-  }
+  if (r.ok) recordBrowserAction('googleSearch', r.opened, 'jarvis-browser');
+  // Context comes from the web_search tool (never Google) — recorded even
+  // when Google refused or challenged us, so follow-ups like "open the
+  // first link" work right after an explicit Google search.
+  await quietContextSearch(q, null);
+  if (r.ok) return r;
   if (r.captcha) return r; // ← detected: tell the user, do NOT retry
   if (r.fallback) {
     // Controlled window unavailable → plain Google tab (no automation at all).
     const plain = await plainOpen(
       `https://www.google.com/search?q=${encodeURIComponent(q)}`
     );
-    if (plain.ok) {
-      recordBrowserAction('googleSearch', plain.opened, plain.via);
-      await quietContextSearch(q, null);
-    }
+    if (plain.ok) recordBrowserAction('googleSearch', plain.opened, plain.via);
     return plain;
   }
   return r;

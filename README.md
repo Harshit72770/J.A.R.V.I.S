@@ -61,7 +61,7 @@ The console footer shows `🖥️ BRIDGE ONLINE` / `🖥️ BRIDGE OFFLINE`.
 | "search for gold price" / "search cricket scores" / "look up X" / "X search karo" | Ordinary searches use the **web_search tool — no Chrome opens**; the reply comes from the results with sources |
 | "search google for NIT Raipur" / "google X" | Google results in the **controlled browser window** — only when you *say* Google. If Google shows a CAPTCHA, Jarvis detects it and says *"Google is asking for human verification, so I can't continue the automated Google search."* and stops (never solves, bypasses or retries) |
 | "search for Arijit Singh" *(while YouTube is the active site)* | Searches **inside YouTube** (keyless YouTube results — no Google involved) |
-| "open the first result" / "play the first result" / "open result 2" / "open the last result" | Opens/plays that result of your previous search (web **or** YouTube) |
+| "open the first result/link" / "play this first song" / "open link 2" / "open the last result" | Opens/plays that result of your previous search (web **or** YouTube) |
 | "open the official website of NIT Raipur" / "open the official NIT Raipur website" | Searches first, picks the official domain from real results (never guesses a URL) |
 | "go back" / "go forward" / "refresh the page" / "close this tab" | Browser history + tab control in the controlled window |
 | "what is the current page" / "which page am i on" | Reads back the page title + URL |
