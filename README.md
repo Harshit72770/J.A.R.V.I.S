@@ -33,7 +33,7 @@ The console footer shows `🖥️ BRIDGE ONLINE` / `🖥️ BRIDGE OFFLINE`.
 | Say | Does |
 | --- | --- |
 | "open youtube" / "यूट्यूब खोलो" / "youtube kholo" | Opens YouTube in Chrome |
-| "play <song> on youtube" / "<song> bajao" | YouTube search for that song |
+| "play <song> on youtube" / "<song> bajao" / "open youtube and play <song>" | **Music Player** — keyless YouTube search, plays the best result, updates the player |
 | "search <anything>" / "google <anything>" / "<x> search karo" | Google results in a new tab |
 | "search <x> on youtube" | YouTube search results |
 | "open facebook" / "open github.com" / "open chatgpt on chrome" / "open facebook website" | Opens any website in Chrome (40+ known names + any domain) |
@@ -61,7 +61,10 @@ The console footer shows `🖥️ BRIDGE ONLINE` / `🖥️ BRIDGE OFFLINE`.
 | "search for gold price" / "search cricket scores" / "look up X" / "X search karo" | Ordinary searches use the **web_search tool — no Chrome opens**; the reply comes from the results with sources |
 | "search google for NIT Raipur" / "google X" | Google results in the **controlled browser window** — only when you *say* Google. If Google shows a CAPTCHA, Jarvis detects it and says *"Google is asking for human verification, so I can't continue the automated Google search."* and stops (never solves, bypasses or retries) |
 | "search for Arijit Singh" *(while YouTube is the active site)* | Searches **inside YouTube** (keyless YouTube results — no Google involved) |
-| "open the first result/link" / "play this first song" / "open link 2" / "open the last result" | Opens/plays that result of your previous search (web **or** YouTube) |
+| "open the first result/link" / "play this first song" / "open link 2" / "open the last result" | Opens/plays that result of your previous search (web **or** YouTube — a YouTube result plays in place, reusing the player tab) |
+| "pause the music" / "pause karo" / "resume" / "stop the music" | Music Player pause / resume / stop |
+| "play the next song" / "skip this song" / "play the previous song" | Next / previous track in the queue |
+| "forward 10 seconds" / "go back 10 seconds" / "rewind 30 seconds" | Seeks the **real** video position (±N seconds) |
 | "open the official website of NIT Raipur" / "open the official NIT Raipur website" | Searches first, picks the official domain from real results (never guesses a URL) |
 | "go back" / "go forward" / "refresh the page" / "close this tab" | Browser history + tab control in the controlled window |
 | "what is the current page" / "which page am i on" | Reads back the page title + URL |
@@ -112,6 +115,38 @@ worker stops itself after 2 minutes idle.
   progress bars under each value.
 - Needs the bridge running (`npm start` auto-starts it); without it the
   commands say so instead of failing silently.
+
+## Music Player (below the SYSTEM CONTROLS panel)
+
+A compact player sits **directly below** the Volume/Brightness panel in the
+top-right corner — same glass-panel design language, no second UI:
+
+- **Empty state or live track** — `🎵 No music playing`, or the video's
+  thumbnail, title and channel/artist with a clickable progress bar,
+  `current / duration`, and ⏮ · ↶10 · ▶/⏸ · 10↷ · ⏭ (every button is
+  implemented; prev/next grey out when the queue can't go further).
+- **One source of truth** — the bridge reads the actual `<video>` element of
+  the open YouTube watch page (`GET/POST /music` → `bridge/music-control.js`),
+  so pausing inside the YouTube tab flips the panel to paused, a song that
+  ends auto-advances the queue, and there are no fake timers. The panel polls
+  once a second **only while a track is loaded**, and stops itself when idle.
+- **Voice + text** — "play Believer" (or "open youtube and play X", "X bajao")
+  runs the free keyless YouTube results fetch, plays the most relevant result
+  in the **existing controlled browser window** (an open YouTube tab is reused
+  — never a new window per command), then pause / resume / stop / next /
+  previous / "skip this song" / "forward 10 seconds" / "go back 10 seconds" /
+  "play the first result" all work against the real player.
+- **Controlled tool only** — the LLM can pick from a fixed whitelist
+  (`play · pause · resume · stop · seekBy · seekTo · next · previous ·
+  getState`); it can never execute JavaScript or shell, and nothing is ever
+  downloaded (streaming playback only).
+- **Failure-safe** — if a video fails to load or autoplay is blocked, the
+  panel shows a small error (`Unable to play this song.` / a Play button) and
+  Jarvis keeps accepting commands. If the controlled window is unavailable,
+  "play X" falls back to the classic plain YouTube results tab.
+- **FREE** — keyless YouTube results (`bridge/web-search.js`), the already
+  installed `puppeteer-core` window and local bridge polling. No API key, no
+  quota, no subscription, no new dependency.
 
 ## Web Research + Browser Control
 
@@ -221,17 +256,26 @@ this repository.
   the voice-facing action dispatcher
 - `frontend/src/components/SystemControls.js` — top-right SYSTEM CONTROLS
   readout (🔊 Volume / ☀️ Brightness, live percentages)
+- `frontend/src/services/musicPlayer.js` — music state store + `/music`
+  bridge client (bounded 1s poll only while a track is loaded; command
+  errors persist until the next command)
+- `frontend/src/components/MusicPlayer.js` — compact player panel rendered
+  in the `.corner-stack` column directly below System Controls
 - `bridge/server.js` — zero-dependency local bridge on `127.0.0.1:4777`
   (`/health`, `/open?kind=url|app|file|folder|find&target=…`, `/groq` — the
   Groq proxy that attaches the API key from `.env` — `/media` for
   system volume/brightness, `/search` for web research, `/ytsearch` for
-  YouTube context, and `/browser` for controlled browser actions)
+  YouTube context, `/browser` for controlled browser actions, and `/music`
+  for the controlled music tool)
 - `bridge/web-search.js` — free keyless web search behind an abstract
   provider map (DuckDuckGo → Bing RSS / Google News RSS fallback chain) plus
   the keyless `searchYouTube()` results fetcher
 - `bridge/browser-control.js` — controlled browser functions (whitelisted
   actions, `http/https` URL validation, CAPTCHA detection for explicit Google
   searches, persistent window via `puppeteer-core`)
+- `bridge/music-control.js` — controlled music tool (whitelisted play ·
+  pause · resume · stop · seek · next · previous · getState over the real
+  `<video>` state; reuses browser-control's window, bounded queue)
 - `bridge/package.json` — bridge dependencies (`puppeteer-core` only; free,
   no API key, drives the locally installed Chrome/Edge)
 - `bridge/media-worker.ps1` — resident PowerShell worker (Core Audio + WMI)

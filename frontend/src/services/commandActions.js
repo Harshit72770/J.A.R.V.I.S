@@ -748,6 +748,124 @@ function matchMediaCommand(raw) {
   return null;
 }
 
+// ─── Music control matcher (the controlled YouTube player) ──────────────────
+// Whitelisted music-tool commands (§6): pause · resume · stop · next ·
+// previous · ±N seconds · skip. "Play <song>" is matched later by the PLAY
+// rules and ALSO resolves to the music tool. Context-free: execution
+// (services/musicPlayer.js) talks to the bridge's music-control whitelist —
+// no arbitrary JavaScript, no shell, free keyless YouTube search only.
+function matchMusicCommand(raw) {
+  const text = String(raw || '')
+    .replace(
+      /^(?:okay\s+|ok\s+|hey\s+|jarvis\s+|please\s+|plz\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+)*/i,
+      ''
+    )
+    .trim();
+  if (!text) return null;
+  let m;
+
+  // ── PAUSE: "pause the music" · "music pause karo" · "pause karo" ──────
+  if (
+    /^(?:pause|music\s+pause|pause\s+(?:the\s+)?(?:music|song|track|gaana|video)|music\s+(?:pause|rok)(?:\s+(?:karo|kar\s+do|do))?|gaana\s+(?:pause|rok)(?:\s+(?:karo|kar\s+do|do))?)$/i.test(
+      text
+    ) ||
+    /^(?:pause|music|gaana)\s+(?:karo|kar\s+do|do|करो|कर\s+दो)$/i.test(text)
+  ) {
+    return { type: 'music', action: 'pause' };
+  }
+
+  // ── RESUME: "resume" · "resume the music" · "music chalu karo" ────────
+  if (
+    /^(?:resume|resume\s+(?:the\s+)?(?:music|song|track|gaana|video)|music\s+resume(?:\s+(?:karo|kar\s+do|do))?)$/i.test(
+      text
+    ) ||
+    /^(?:music|gaana)\s+(?:chalu|चालू)\s+(?:karo|kar\s+do|do|करो|कर\s+दो)$/i.test(
+      text
+    ) ||
+    /^(?:म्यूज़िक|गाना)\s+चालू\s+(?:करो|कर\s+दो)$/.test(text)
+  ) {
+    return { type: 'music', action: 'resume' };
+  }
+
+  // ── STOP: "stop the music" · "music stop karo" · "gaana band karo" ────
+  // Bare "stop" is deliberately NOT a music command — it stays chat.
+  if (
+    /^stop\s+(?:the\s+)?(?:music|song|track|gaana|video)(?:\s+(?:karo|kar\s+do|do))?$/i.test(
+      text
+    ) ||
+    /^(?:music|gaana)\s+stop(?:\s+(?:karo|kar\s+do|do))?$/i.test(text) ||
+    /^(?:gaana|music|गाना|म्यूज़िक)\s+band\s+(?:karo|kar\s+do|do|करो|कर\s+दो)$/i.test(
+      text
+    )
+  ) {
+    return { type: 'music', action: 'stop' };
+  }
+
+  // ── NEXT / SKIP: "play the next song" · "skip this song" · "agla gaana chalao" ──
+  if (
+    /^(?:(?:play|chalao|चलाओ)\s+)?(?:the\s+)?(?:next|agla|अगला)\s+(?:song|track|gaana|video|one)(?:\s+(?:please|karo))?$/i.test(
+      text
+    ) ||
+    /^skip\s+(?:this|the)\s+(?:song|track|video|gaana)$/i.test(text) ||
+    /^(?:agla|अगला)\s+(?:gaana|गाना)\s+(?:chalao|चलाओ|play)$/i.test(text)
+  ) {
+    return { type: 'music', action: 'next' };
+  }
+
+  // ── PREVIOUS: "play the previous song" · "go back to the last song" ───
+  if (
+    /^(?:(?:play|chalao|चलाओ)\s+)?(?:the\s+)?(?:previous|pichla|पिछला)\s+(?:song|track|gaana|video|one)(?:\s+(?:please|karo))?$/i.test(
+      text
+    ) ||
+    /^(?:go\s+)?back\s+to\s+(?:the\s+)?(?:previous|last)\s+(?:song|track|video)$/i.test(
+      text
+    ) ||
+    /^(?:pichla|पिछला)\s+(?:gaana|गाना)\s+(?:chalao|चलाओ|play)$/i.test(text)
+  ) {
+    return { type: 'music', action: 'previous' };
+  }
+
+  // ── SEEK: "forward 10 seconds" · "go back 10 seconds" · "10 second aage" ──
+  m = text.match(
+    /^(?:fast[-\s]?forward|forward|aage)\s+(\d{1,3})\s*(?:seconds?|secs?|s)$/i
+  );
+  if (m) {
+    return {
+      type: 'music',
+      action: 'seekBy',
+      seconds: Math.min(600, parseInt(m[1], 10)),
+    };
+  }
+  m = text.match(
+    /^(?:go\s+)?(?:back|rewind|piche)\s+(\d{1,3})\s*(?:seconds?|secs?|s)$/i
+  );
+  if (m) {
+    return {
+      type: 'music',
+      action: 'seekBy',
+      seconds: -Math.min(600, parseInt(m[1], 10)),
+    };
+  }
+  m = text.match(/^(\d{1,3})\s*(?:seconds?|secs?|s)\s+(?:forward|ahead|aage)$/i);
+  if (m) {
+    return {
+      type: 'music',
+      action: 'seekBy',
+      seconds: Math.min(600, parseInt(m[1], 10)),
+    };
+  }
+  m = text.match(/^(\d{1,3})\s*(?:seconds?|secs?|s)\s+(?:back|rewind|piche)$/i);
+  if (m) {
+    return {
+      type: 'music',
+      action: 'seekBy',
+      seconds: -Math.min(600, parseInt(m[1], 10)),
+    };
+  }
+
+  return null;
+}
+
 /**
  * Returns { type, target } for an utterance J.A.R.V.I.S can execute locally,
  * or null when the text should go to the language model instead.
@@ -839,7 +957,7 @@ function matchBrowserCommand(raw) {
   // stored web/YouTube search context. Optional trailing "of the …" noise
   // ("open the first link of the website") is ignored.
   m = text.match(
-    /^(?:open|play|show)\s+(?:(?:this|the)\s+)?(first|second|third|fourth|fifth|last|(\d+)(?:st|nd|rd|th)?)\s+(?:result|link|song|video|track|page|option)(?:\s+(?:of|from)\s+(?:the\s+)?(?:search|results?|page|website|list))?$/i
+    /^(?:open|play|show)\s+(?:(?:this|the)\s+)?(first|second|third|fourth|fifth|last|(\d+)(?:st|nd|rd|th)?)\s+(?:result|link|song|video|track|page|option|one)(?:\s+(?:of|from)\s+(?:the\s+)?(?:search|results?|page|website|list))?$/i
   );
   if (m) {
     const ordinal = {
@@ -920,6 +1038,13 @@ export function matchLocalCommand(raw, ctx = {}) {
   const mediaAction = matchMediaCommand(text);
   if (mediaAction) return mediaAction;
 
+  // ── 0b2) MUSIC CONTROL: pause/resume/stop/next/previous/±10s ───────────
+  // The controlled music tool (spec §6) — matched before browser control so
+  // "play the previous song" is playback, while "play the last RESULT"
+  // (noun = result) still resolves against the stored search context.
+  const musicAction = matchMusicCommand(text);
+  if (musicAction) return musicAction;
+
   // ── 0c) BROWSER CONTROL: tabs, history, search-result follow-ups ───────
   const browserAction = matchBrowserCommand(text);
   if (browserAction) return browserAction;
@@ -941,13 +1066,14 @@ export function matchLocalCommand(raw, ctx = {}) {
 
   let m;
 
-  // ── 1) PLAY → YouTube ──────────────────────────────────────────────────
+  // ── 1) PLAY → the music tool (searches YouTube, plays the best result) ──
   m = text.match(
     /^(?:okay\s+|ok\s+|hey\s+|please\s+|plz\s+|jarvis\s+)?play\s+(?:me\s+|some\s+|the\s+|a\s+|up\s+|it\s+|my\s+)?(.+)$/i
   );
   if (m) {
     const q = stripYoutube(m[1]);
-    return { type: 'ytSearch', target: isEmptyQuery(q) ? 'music' : q };
+    const target = isEmptyQuery(q) ? 'music' : q;
+    return { type: 'music', action: 'play', target };
   }
 
   // Hindi / Hinglish: "<song> bajao", "gaana chalao", "play karo"
@@ -956,7 +1082,8 @@ export function matchLocalCommand(raw, ctx = {}) {
   );
   if (m) {
     const q = stripYoutube(m[1] || '');
-    return { type: 'ytSearch', target: isEmptyQuery(q) ? 'music' : q };
+    const target = isEmptyQuery(q) ? 'music' : q;
+    return { type: 'music', action: 'play', target };
   }
 
   // ── 2) SEARCH → the free web_search tool by default (NO Chrome), the
@@ -1041,13 +1168,16 @@ export function matchLocalCommand(raw, ctx = {}) {
   }
 
   // ── 4) OPEN YOUTUBE ────────────────────────────────────────────────────
-  // "open youtube and play X" / "open youtube and search X"
+  // "open youtube and play X" → music tool; "…and search X" → results page
   m = text.match(
-    /(?:open|launch|start|kholo|खोलो|खोल\s+दो|go\s+to)\s+(?:the\s+|my\s+)?(?:youtube|youtu\.be|यूट्यूब|यू\s+ट्यूब)[\s,]*(?:and\s+|then\s+)?(?:play|search|look\s+up)\s+(.+)$/i
+    /(?:open|launch|start|kholo|खोलो|खोल\s+दो|go\s+to)\s+(?:the\s+|my\s+)?(?:youtube|youtu\.be|यूट्यूब|यू\s+ट्यूब)[\s,]*(?:and\s+|then\s+)?(play|search|look\s+up)\s+(.+)$/i
   );
   if (m) {
-    const q = stripYoutube(m[1]);
-    return { type: 'ytSearch', target: isEmptyQuery(q) ? 'music' : q };
+    const verb = (m[1] || '').toLowerCase();
+    const q = stripYoutube(m[2]);
+    const target = isEmptyQuery(q) ? 'music' : q;
+    if (verb === 'play') return { type: 'music', action: 'play', target };
+    return { type: 'ytSearch', target };
   }
 
   if (mentionsYoutube(text)) {
@@ -1069,7 +1199,8 @@ export function matchLocalCommand(raw, ctx = {}) {
     const verb = m[1].toLowerCase();
     const q = stripYoutube(m[2].trim());
     if (verb === 'play') {
-      return { type: 'ytSearch', target: isEmptyQuery(q) ? 'music' : q };
+      const target = isEmptyQuery(q) ? 'music' : q;
+      return { type: 'music', action: 'play', target };
     }
     const cleaned = cleanSearchQuery(q);
     if (!isEmptyQuery(cleaned)) return { type: 'google', target: cleaned };
@@ -1176,6 +1307,58 @@ export async function runLocalCommand(action) {
       return await executeBrowserAction(action);
     } catch (e) {
       return { ok: false, error: 'Browser control module failed to load.' };
+    }
+  }
+
+  // ── Music tool (the controlled YouTube player in the browser window) ───
+  // Whitelisted functions only (play · pause · resume · stop · seek · next ·
+  // previous) — never arbitrary JavaScript or shell. When the controlled
+  // window is unavailable the classic plain YouTube tab opens instead, so
+  // "play X" still works exactly as it did before the Music Player existed.
+  if (action.type === 'music') {
+    try {
+      const { musicCommand } = await import('./musicPlayer.js');
+      const r = await musicCommand(action);
+      if (r.ok) {
+        try {
+          const bc = await import('./browserControl.js');
+          // Browser context: the controlled window is now on YouTube.
+          if (r.currentTrack && r.currentTrack.url) {
+            bc.recordBrowserAction('music', r.currentTrack.url, 'jarvis-browser');
+          }
+          // Search context: the queue IS the results of this query, so
+          // "play the second one" resolves right after a play (§7).
+          if (
+            action.action === 'play' &&
+            Array.isArray(r.queue) &&
+            r.queue.length
+          ) {
+            bc.recordSearchContext(action.target, r.queue, 'youtube');
+          }
+        } catch (e) {
+          /* context recording must never fail the command */
+        }
+        return r;
+      }
+      if (!r.fallback) return r; // real failure — spoken, no silent retry
+      // Automation unavailable → classic plain YouTube results tab.
+      if (action.action === 'play') {
+        const online = await checkBridge(true);
+        const plain = await openLink(ytSearchUrl(action.target), online);
+        if (plain.ok) {
+          try {
+            const bc = await import('./browserControl.js');
+            bc.recordSearchContext(action.target, [], 'youtube');
+            if (plain.opened) bc.recordBrowserOpen(plain.opened, plain.via);
+          } catch (e) {
+            /* noop */
+          }
+        }
+        return plain;
+      }
+      return r;
+    } catch (e) {
+      return { ok: false, error: 'Music control module failed to load.' };
     }
   }
 
@@ -1396,6 +1579,17 @@ export function describeAction(action, isHindi, langCode) {
           ? 'माफ़ कीजिए सर, यह ब्राउज़र कमांड नहीं हो पाया।'
           : 'Sorry Sir, that browser command did not work.',
       };
+    case 'music':
+      // Replaced by describeMusicResult once the bridge replies with the
+      // REAL player state; this is only the pending line + failure voice.
+      return {
+        pending: `🎵 MUSIC // ${musicActionLabel(action)}`,
+        done: '🎵 MUSIC // done',
+        speak: isHindi ? 'संगीत कमांड चला रहा हूँ, सर।' : 'Working on it, Sir.',
+        failSpeak: isHindi
+          ? 'माफ़ कीजिए सर, यह संगीत कमांड नहीं हो पाया।'
+          : 'Sorry Sir, that music command did not work.',
+      };
     case 'researchFail':
       return {
         pending: '🔎 WEB SEARCH // querying search providers…',
@@ -1564,6 +1758,179 @@ export function describeMediaResult(action, result, isHindi) {
             : `Volume is ${n} percent${
                 result.muted ? ' and it is muted' : ''
               }, Sir.`,
+      };
+  }
+}
+
+/** Short pending-line description for a music action. */
+function musicActionLabel(action) {
+  switch (action.action) {
+    case 'play':
+    case 'playUrl':
+      return `playing "${action.target || action.url || '…'}"…`;
+    case 'playIndex':
+      return `opening result #${action.index}…`;
+    case 'pause':
+      return 'pausing…';
+    case 'resume':
+      return 'resuming…';
+    case 'stop':
+      return 'stopping…';
+    case 'next':
+      return 'next song…';
+    case 'previous':
+      return 'previous song…';
+    case 'seekBy':
+      return `${action.seconds >= 0 ? 'forward' : 'back'} ${Math.abs(
+        action.seconds
+      )}s…`;
+    case 'seekTo':
+      return 'seeking…';
+    default:
+      return 'working…';
+  }
+}
+
+const fmtClock = (totalSeconds) => {
+  const t = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const m = Math.floor(t / 60);
+  const s = t % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
+
+/**
+ * Result-aware copy for music actions — runs AFTER the bridge replies with
+ * the real player state, so it speaks what actually happened:
+ *   "Playing Believer, Sir." / "Music paused, Sir." /
+ *   "Unable to play this song, Sir." (spec §12 — never crashes, small error)
+ */
+export function describeMusicResult(action, result, isHindi) {
+  if (!result || !result.ok) {
+    const err = (result && result.error) || '';
+    let speak;
+    if (/no results|returned no results/i.test(err)) {
+      speak = isHindi
+        ? 'माफ़ कीजिए सर, यह गाना नहीं मिला।'
+        : 'Unable to find that song, Sir.';
+    } else if (/autoplay|press play/i.test(err)) {
+      speak = isHindi
+        ? 'ऑटोप्ले ब्लॉक है — ब्राउज़र में प्ले दबाइए, सर।'
+        : 'Autoplay is blocked — press play in the browser window, Sir.';
+    } else if (/last song in the queue/i.test(err)) {
+      speak = isHindi
+        ? 'यह क्यू का आख़िरी गाना है, सर।'
+        : 'That was the last song in the queue, Sir.';
+    } else if (/no previous song/i.test(err)) {
+      speak = isHindi
+        ? 'इससे पहले कोई गाना नहीं है, सर।'
+        : 'There is no previous song, Sir.';
+    } else if (/queue yet/i.test(err)) {
+      speak = isHindi ? 'पहले कोई गाना चलाइए, सर।' : 'Play a song first, Sir.';
+    } else if (/no youtube video/i.test(err)) {
+      speak = isHindi
+        ? 'कोई यूट्यूब वीडियो नहीं खुला है, सर।'
+        : 'No YouTube video is open, Sir.';
+    } else if (/offline|bridge/i.test(err)) {
+      speak = isHindi
+        ? 'डेस्कटॉप ब्रिज ऑफ़लाइन है, सर।'
+        : 'The desktop bridge is offline, Sir.';
+    } else if (/controllable browser|chrome or edge/i.test(err)) {
+      speak = isHindi
+        ? 'कोई नियंत्रित ब्राउज़र उपलब्ध नहीं है, सर।'
+        : 'No controllable browser is available, Sir.';
+    } else {
+      speak = isHindi
+        ? 'माफ़ कीजिए सर, यह गाना नहीं चल पाया।'
+        : 'Unable to play this song, Sir.';
+    }
+    return {
+      ok: false,
+      done: `⚠ MUSIC // Unable to play this song${err ? ` — ${err}` : ''}`,
+      speak,
+    };
+  }
+
+  const title = result.title || '';
+  const channel = result.channel ? ` — ${result.channel}` : '';
+  const clock = `${fmtClock(result.currentTime)} / ${fmtClock(result.duration)}`;
+
+  switch (action.action) {
+    case 'play':
+    case 'playUrl':
+    case 'playIndex':
+      if (result.autoplayBlocked) {
+        return {
+          ok: true,
+          done: `🎵 NOW PLAYING // ${title} — autoplay blocked, press ▶`,
+          speak: isHindi
+            ? `${title} खुल गया, पर ऑटोप्ले ब्लॉक है — प्ले दबाइए, सर।`
+            : `${title} is open — autoplay was blocked, so press play, Sir.`,
+        };
+      }
+      return {
+        ok: true,
+        done: `🎵 NOW PLAYING // ${title}${channel} [${clock}]`,
+        speak: isHindi
+          ? `${title} चला रहा हूँ, सर।`
+          : `Playing ${title}, Sir.`,
+      };
+    case 'pause':
+      return {
+        ok: true,
+        done: `🎵 MUSIC // paused [${clock}]`,
+        speak: isHindi ? 'संगीत रोक दिया, सर।' : 'Music paused, Sir.',
+      };
+    case 'resume':
+      return {
+        ok: true,
+        done: `🎵 MUSIC // playing [${clock}]`,
+        speak: isHindi ? 'संगीत चालू कर दिया, सर।' : 'Music resumed, Sir.',
+      };
+    case 'stop':
+      return {
+        ok: true,
+        done: '🎵 MUSIC // stopped',
+        speak: isHindi ? 'संगीत बंद कर दिया, सर।' : 'Music stopped, Sir.',
+      };
+    case 'next':
+      return {
+        ok: true,
+        done: `🎵 NOW PLAYING // ${title}${channel} [${clock}]`,
+        speak: isHindi
+          ? `अगला गाना चला रहा हूँ, सर।`
+          : `Playing the next song — ${title}, Sir.`,
+      };
+    case 'previous':
+      return {
+        ok: true,
+        done: `🎵 NOW PLAYING // ${title}${channel} [${clock}]`,
+        speak: isHindi
+          ? `पिछला गाना चला रहा हूँ, सर।`
+          : `Playing the previous song — ${title}, Sir.`,
+      };
+    case 'seekBy': {
+      const d = action.seconds || 0;
+      return {
+        ok: true,
+        done: `🎵 MUSIC // ${d >= 0 ? '+' : ''}${d}s → ${clock}`,
+        speak: isHindi
+          ? `${Math.abs(d)} सेकंड ${d >= 0 ? 'आगे' : 'पीछे'} कर दिए, सर।`
+          : `${Math.abs(d)} seconds ${d >= 0 ? 'forward' : 'back'}, Sir.`,
+      };
+    }
+    case 'seekTo':
+      return {
+        ok: true,
+        done: `🎵 MUSIC // ${clock}`,
+        speak: isHindi
+          ? 'पोज़ीशन बदल दी, सर।'
+          : `Jumped to ${fmtClock(result.currentTime)}, Sir.`,
+      };
+    default:
+      return {
+        ok: true,
+        done: `🎵 MUSIC // ${title || 'updated'}`,
+        speak: isHindi ? 'हो गया, सर।' : 'Done, Sir.',
       };
   }
 }

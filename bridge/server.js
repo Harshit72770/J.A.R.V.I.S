@@ -14,6 +14,8 @@
  *   GET /search?q=<query>                 → free web research (DuckDuckGo)
  *   GET /ytsearch?q=<query>               → free YouTube results (context)
  *   POST /browser {action, url?, query?}  → controlled browser functions
+ *   GET /music                            → real YouTube player state
+ *   POST /music {action, ...}             → controlled music tool functions
  *
  * Launching rules that matter on Windows:
  *  - Never wait for a program to exit (notepad.exe runs for hours).
@@ -33,6 +35,7 @@ const path = require('path');
 // browser-control which lazily loads puppeteer-core if it is installed).
 const { searchWeb, searchYouTube } = require('./web-search.js');
 const browserControl = require('./browser-control.js');
+const musicControl = require('./music-control.js');
 
 const PORT = 4777;
 const HOST = '127.0.0.1';
@@ -957,6 +960,54 @@ const server = http.createServer(async (req, res) => {
     const result = await browserControl.exec(action, {
       url: parsed.url,
       query: parsed.query,
+    });
+    send(200, result);
+    return;
+  }
+
+  // ── MUSIC CONTROL: one controlled YouTube player (music-control.js) ──────
+  // GET  /music              → real player state — reads the actual <video>
+  //                            of the open watch page (never launches Chrome)
+  // POST /music {action, …}  → whitelisted music functions only
+  if (url.pathname === '/music') {
+    if (req.method === 'GET') {
+      musicControl
+        .exec('getState', {})
+        .then((result) => send(200, result))
+        .catch((err) => send(500, fail(err.message)));
+      return;
+    }
+    if (req.method !== 'POST') {
+      send(405, fail('Use GET /music or POST /music {action, ...}.'));
+      return;
+    }
+    const parsed = await readJsonBody(req);
+    if (parsed === null) {
+      send(413, fail('Request body too large.'));
+      return;
+    }
+    if (parsed === false) {
+      send(400, fail('Invalid JSON body.'));
+      return;
+    }
+    const action = String(parsed.action || '');
+    if (!musicControl.ACTIONS.includes(action)) {
+      send(400, fail(`action must be one of: ${musicControl.ACTIONS.join(', ')}.`));
+      return;
+    }
+    if (action !== 'getState') {
+      console.log(
+        `[${new Date().toLocaleTimeString()}] music -> ${action}${
+          parsed.query ? ` ${String(parsed.query).slice(0, 60)}` : ''
+        }`
+      );
+    }
+    const result = await musicControl.exec(action, {
+      query: parsed.query,
+      url: parsed.url,
+      index: parsed.index,
+      seconds: parsed.seconds,
+      queue: Array.isArray(parsed.queue) ? parsed.queue.slice(0, 10) : undefined,
     });
     send(200, result);
     return;

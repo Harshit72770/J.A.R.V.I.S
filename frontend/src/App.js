@@ -6,6 +6,7 @@ import CommandTerminal from './components/CommandTerminal';
 import DigitalClock from './components/DigitalClock';
 import ScreenVision from './components/ScreenVision';
 import SystemControls from './components/SystemControls';
+import MusicPlayer from './components/MusicPlayer';
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES } from './constants/languages';
 import { getStoredModel } from './services/groqService';
 
@@ -87,7 +88,12 @@ function App() {
       />
       <DigitalClock />
       <ScreenVision />
-      <SystemControls />
+      {/* Top-right column: the existing Volume/Brightness panel with the
+          Music Player directly below it — same glass panel language. */}
+      <div className="corner-stack">
+        <SystemControls />
+        <MusicPlayer />
+      </div>
       <CommandTerminal
         blobConfig={blobConfig}
         isListening={isListening}

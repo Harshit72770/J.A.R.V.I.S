@@ -1,14 +1,10 @@
 /* ─── SYSTEM CONTROLS — top-right volume / brightness readout ───────────────
-   Sits below the navbar's right edge (navbar is capped at 1350px, so the
-   corner is free on wide screens) and floats above the console's top-right
-   corner on narrower windows — same glass panel language as ScreenVision. */
+   Lives in App.js's .corner-stack column (which owns the fixed position and
+   the width) with the Music Player directly below — same glass panel
+   language as ScreenVision and the player. */
 
 .system-controls {
-  position: fixed;
-  top: 96px;
-  right: 18px;
-  z-index: 960; /* above the console (950), below the navbar (1000) */
-  width: 212px;
+  width: 100%;
   padding: 9px 12px 10px;
   background: rgba(4, 14, 20, 0.72);
   border: 1px solid rgba(0, 240, 255, 0.24);
@@ -108,10 +104,9 @@
 }
 
 /* Narrow windows: the console's top-right corner slides under this panel —
-   shrink so it covers as little as possible. */
+   shrink so it covers as little as possible (width is owned by the stack). */
 @media (max-width: 1346px) {
   .system-controls {
-    width: 186px;
     padding: 8px 10px 9px;
   }
 
@@ -126,12 +121,6 @@
 }
 
 @media (max-width: 768px) {
-  .system-controls {
-    top: 88px;
-    right: 10px;
-    width: 168px;
-  }
-
   .sc-head {
     font-size: 8.5px;
     letter-spacing: 0.14em;

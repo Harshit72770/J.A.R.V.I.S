@@ -119,6 +119,11 @@ async function ensureBrowser() {
       '--no-default-browser-check',
       '--disable-default-apps',
       '--window-size=1280,860',
+      // Voice-initiated media ("play Believer") must start without a click.
+      // This is this machine's own browser policy for J.A.R.V.I.S's window —
+      // if a video still refuses to autoplay, music-control reports it and
+      // the HUD shows the Play button (never forced, never crashed).
+      '--autoplay-policy=no-user-gesture-required',
     ],
   });
   try {
@@ -346,4 +351,31 @@ async function exec(action, args = {}) {
   }
 }
 
-module.exports = { exec, ACTIONS };
+// ── Shared internals for bridge/music-control.js ─────────────────────────────
+// The music tool drives THIS SAME window (one browser, one player, one audio
+// stream — no second automation system ever gets created). It can only reach
+// the primitives below; the HTTP whitelist (ACTIONS) stays unchanged.
+const internals = {
+  ensureBrowser,
+  // Current browser if already launched, WITHOUT launching it (the music
+  // state poll must never pop a window open on its own).
+  async peekBrowser() {
+    if (!browserPromise) return null;
+    try {
+      const b = await browserPromise;
+      return b && b.isConnected() ? b : null;
+    } catch (e) {
+      return null;
+    }
+  },
+  getActivePage() {
+    return lastPage && !lastPage.isClosed() ? lastPage : null;
+  },
+  setActivePage(page) {
+    if (page) lastPage = page;
+  },
+  validateUrl,
+  NAV_TIMEOUT,
+};
+
+module.exports = { exec, ACTIONS, internals };

@@ -13,6 +13,7 @@ import {
   describeAction,
   describeMediaResult,
   describeBrowserResult,
+  describeMusicResult,
   checkBridge,
   GOOGLE_CAPTCHA_MESSAGE,
 } from '../services/commandActions';
@@ -743,18 +744,20 @@ const CommandTerminal = ({
       action.type === 'browser'
         ? describeBrowserResult(action, result, isHindi)
         : null;
+    // Music replies describe the REAL player state ("Playing Believer, Sir.").
+    const musicCopy =
+      action.type === 'music'
+        ? describeMusicResult(action, result, isHindi)
+        : null;
+    const copy = browserCopy || mediaCopy || musicCopy;
     const outcome = result.ok
-      ? browserCopy
-        ? browserCopy.done
-        : mediaCopy
-        ? mediaCopy.done
+      ? copy
+        ? copy.done
         : `${described.done}${
             result.opened ? ` → ${result.opened}` : ''
           }`
-      : browserCopy
-      ? browserCopy.done
-      : mediaCopy
-      ? mediaCopy.done
+      : copy
+      ? copy.done
       : `⚠ ACTION FAILED // ${result.error}`;
     setCommandLogs((prev) =>
       prev.map((log) =>
@@ -770,10 +773,8 @@ const CommandTerminal = ({
       const tts = createTtsSession(langCode);
       ttsSessionRef.current = tts;
       tts.push(
-        browserCopy
-          ? browserCopy.speak
-          : mediaCopy
-          ? mediaCopy.speak
+        copy
+          ? copy.speak
           : result.ok
           ? described.speak
           : result.captcha

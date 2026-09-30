@@ -14,3 +14,34 @@
   justify-content: center;
   width: 100%;
 }
+
+/* ─── Top-right HUD column ─────────────────────────────────────────────────
+   Holds System Controls (Volume/Brightness) with the Music Player directly
+   below it. These were the coordinates SystemControls used to own as a
+   fixed-position element — the stack now owns them, so the panel's position
+   is unchanged and the player simply flows underneath. z-index 960 keeps the
+   column above the console (950) and below the navbar (1000). */
+.corner-stack {
+  position: fixed;
+  top: 96px;
+  right: 18px;
+  z-index: 960;
+  width: 212px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (max-width: 1346px) {
+  .corner-stack {
+    width: 186px;
+  }
+}
+
+@media (max-width: 768px) {
+  .corner-stack {
+    top: 88px;
+    right: 10px;
+    width: 168px;
+  }
+}

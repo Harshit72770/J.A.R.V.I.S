@@ -349,6 +349,15 @@ const unescapeJson = (s) =>
     .replace(/\\n/g, ' ')
     .replace(/\\\\/g, '\\');
 
+// "3:24" → 204 seconds (null when unparseable / not given, e.g. livestreams).
+const parseDurationSeconds = (text) => {
+  const parts = String(text || '').split(':');
+  if (parts.length < 2 || parts.length > 3) return null;
+  const nums = parts.map((p) => Number(p));
+  if (nums.some((n) => !Number.isFinite(n))) return null;
+  return nums.reduce((total, n) => total * 60 + n, 0);
+};
+
 async function searchYouTube(query) {
   const q = String(query || '')
     .replace(/[\r\n\t]+/g, ' ')
@@ -360,21 +369,38 @@ async function searchYouTube(query) {
   );
   const results = [];
   const seen = new Set();
-  // Each result block: "videoRenderer":{"videoId":"…" … "title":{"runs":[{"text":"…"
-  const re =
-    /"videoRenderer":\{"videoId":"([^"]+)"[\s\S]{0,3000}?"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/g;
+  // Locate every videoRenderer block, then pull the fields the Music Player
+  // needs (id · title · channel · thumbnail · duration) out of that block.
+  const idRe = /"videoRenderer":\{"videoId":"([\w-]{11})"/g;
+  const marks = [];
   let m;
-  while ((m = re.exec(html)) && results.length < MAX_RESULTS) {
-    const id = m[1];
-    if (!/[\w-]{11}/.test(id) || seen.has(id)) continue;
-    const title = unescapeJson(m[2]).trim();
+  while ((m = idRe.exec(html))) marks.push({ id: m[1], start: m.index });
+  for (let i = 0; i < marks.length && results.length < MAX_RESULTS; i++) {
+    const { id, start } = marks[i];
+    if (seen.has(id)) continue;
+    const end =
+      i + 1 < marks.length ? marks[i + 1].start : Math.min(html.length, start + 8000);
+    const block = html.slice(start, end);
+    const t = block.match(/"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/);
+    const title = t ? unescapeJson(t[1]).trim() : '';
     if (!title) continue;
     seen.add(id);
+    const c =
+      block.match(/"ownerText":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/) ||
+      block.match(/"longBylineText":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/);
+    const th = block.match(/"thumbnail":\{"thumbnails":\[\{"url":"([^"]+)"/);
+    const len = block.match(/"lengthText":\{"simpleText":"([^"]+)"/);
+    const durationText = len ? unescapeJson(len[1]) : '';
     results.push({
       title,
       url: `https://www.youtube.com/watch?v=${id}`,
       snippet: '',
       source: 'youtube.com',
+      videoId: id,
+      channel: c ? unescapeJson(c[1]).trim() : '',
+      thumbnail: th ? unescapeJson(th[1]) : '',
+      durationText,
+      durationSeconds: parseDurationSeconds(durationText),
     });
   }
   if (!results.length) throw new Error('YouTube returned no results.');

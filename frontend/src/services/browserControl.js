@@ -79,6 +79,13 @@ function siteOf(url) {
   }
 }
 
+// Watch/shorts/live/youtu.be links only — these are what the music tool
+// plays in place instead of opening a second tab.
+const isYoutubeVideoUrl = (u) =>
+  /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?|shorts\/|live\/)|youtu\.be\/)/i.test(
+    String(u || '')
+  );
+
 const browserLabel = (via) =>
   via === 'jarvis-browser'
     ? 'jarvis-browser'
@@ -372,6 +379,27 @@ export async function executeBrowserAction(action) {
           };
         }
         const pick = results[index - 1];
+        // YouTube videos play IN PLACE through the music tool: the existing
+        // YouTube tab is reused → one window, one tab, one audio stream
+        // (§11/§17), and the Music Player picks the track up immediately.
+        if (isYoutubeVideoUrl(pick.url)) {
+          try {
+            const { musicCommand } = await import('./musicPlayer.js');
+            const r = await musicCommand({
+              action: 'playUrl',
+              url: pick.url,
+              queue: results,
+              index,
+            });
+            if (r.ok) {
+              recordBrowserAction('openResult', pick.url, 'jarvis-browser');
+              return { ...r, result: pick };
+            }
+            if (!r.fallback) return r; // real failure — report, no extra tab
+          } catch (e) {
+            /* fall through to the ordinary opener */
+          }
+        }
         const r = await openInNewTab(pick.url);
         if (r.ok) recordBrowserAction('openResult', r.opened);
         return r.ok ? { ...r, result: pick } : r;

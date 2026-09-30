@@ -1,0 +1,225 @@
+/* ─── MUSIC PLAYER — compact panel below System Controls ──────────────────────
+   Lives in the same .corner-stack column as SystemControls and reuses its
+   glass language (dark translucent card, cyan hairline, clipped corners,
+   Orbitron/Rajdhani type) so it reads as part of the existing HUD. */
+
+.music-player {
+  position: relative;
+  width: 100%;
+  padding: 9px 12px 10px;
+  background: rgba(4, 14, 20, 0.72);
+  border: 1px solid rgba(0, 240, 255, 0.24);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  clip-path: polygon(
+    0 10px,
+    10px 0,
+    100% 0,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    0 100%
+  );
+  user-select: none;
+  text-align: left;
+}
+
+.mp-led {
+  background: #00f0ff;
+  box-shadow: 0 0 6px rgba(0, 240, 255, 0.9);
+}
+
+.mp-empty {
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 13.5px;
+  letter-spacing: 0.04em;
+  color: rgba(200, 232, 245, 0.7);
+  padding: 2px 0 1px;
+}
+
+/* ── Track row: thumbnail + title/channel ────────────────────────────────── */
+.mp-track {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 7px;
+}
+
+.mp-thumb {
+  width: 58px;
+  height: 33px;
+  object-fit: cover;
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  background: rgba(0, 240, 255, 0.08);
+  flex: 0 0 auto;
+}
+
+.mp-thumb-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+
+.mp-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mp-title {
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: rgba(214, 240, 250, 0.97);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mp-channel {
+  font-family: 'Orbitron', monospace;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: rgba(0, 240, 255, 0.75);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Progress bar (click to seek) ────────────────────────────────────────── */
+.mp-progress {
+  position: relative;
+  height: 5px;
+  background: rgba(0, 240, 255, 0.12);
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.mp-progress:hover {
+  background: rgba(0, 240, 255, 0.2);
+}
+
+.mp-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(0, 240, 255, 0.55), #00f0ff);
+  transition: width 0.3s linear;
+}
+
+.mp-progress-knob {
+  position: absolute;
+  top: -1.5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #00f0ff;
+  box-shadow: 0 0 6px rgba(0, 240, 255, 0.9);
+  pointer-events: none;
+}
+
+.mp-times {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'Orbitron', monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgba(0, 240, 255, 0.85);
+  margin: 4px 0 6px;
+}
+
+/* ── Controls: ⏮ ↶10 ▶/⏸ 10↷ ⏭ ──────────────────────────────────────────── */
+.mp-controls {
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+}
+
+.mp-btn {
+  min-width: 30px;
+  height: 24px;
+  padding: 0 6px;
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  line-height: 1;
+  color: rgba(0, 240, 255, 0.95);
+  background: rgba(0, 240, 255, 0.07);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mp-btn:hover:not(:disabled) {
+  background: rgba(0, 240, 255, 0.18);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.35);
+}
+
+.mp-btn:active:not(:disabled) {
+  background: rgba(0, 240, 255, 0.3);
+}
+
+.mp-btn:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.mp-btn-seek {
+  font-size: 9.5px;
+  letter-spacing: 0;
+}
+
+.mp-play {
+  min-width: 40px;
+  font-size: 13px;
+  background: rgba(0, 240, 255, 0.14);
+}
+
+/* ── Notes / errors ──────────────────────────────────────────────────────── */
+.mp-note {
+  margin-top: 6px;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: #ffd257;
+}
+
+.mp-error {
+  margin-top: 6px;
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 11.5px;
+  line-height: 1.25;
+  letter-spacing: 0.03em;
+  color: #ff7a86;
+  word-break: break-word;
+}
+
+/* Narrow windows shrink with the stack (same steps as SystemControls). */
+@media (max-width: 1346px) {
+  .music-player {
+    padding: 8px 10px 9px;
+  }
+
+  .mp-title {
+    font-size: 12.5px;
+  }
+}
+
+@media (max-width: 768px) {
+  .mp-thumb {
+    width: 50px;
+    height: 29px;
+  }
+
+  .mp-btn {
+    min-width: 27px;
+    height: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-progress-fill,
+  .mp-btn {
+    transition: none;
+  }
+}
