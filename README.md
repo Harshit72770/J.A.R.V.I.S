@@ -56,6 +56,13 @@ The console footer shows `🖥️ BRIDGE ONLINE` / `🖥️ BRIDGE OFFLINE`.
 | "what is the volume" / "volume kitna hai" | Reports the current volume |
 | "increase brightness" / "set brightness to 70" / "brightness down" | Screen backlight ±10% or to an exact % |
 | "what is the brightness" | Reports the current brightness |
+| "search the web for python tutorials" / "internet par search karo X" | **Web research** — searches first, then answers from the retrieved results with sources |
+| "who is the current CEO of Microsoft" / "latest news about NVIDIA" / "price of gold today" / "who won today's match" / "what is the weather" | Recognised as *current-information* questions → answered from live web results, never from memory |
+| "search google for NIT Raipur" / "google X" | Google results in the **controlled browser window** (falls back to a plain tab if the window can't be controlled) |
+| "open the first result" / "open result 2" / "open the last result" | Opens that result of your previous search |
+| "open the official website of NIT Raipur" / "open the official NIT Raipur website" | Searches first, picks the official domain from real results (never guesses a URL) |
+| "go back" / "go forward" / "refresh the page" / "close this tab" | Browser history + tab control in the controlled window |
+| "what is the current page" / "which page am i on" | Reads back the page title + URL |
 
 Anything the matcher does not recognise goes to Groq as a normal chat reply.
 Actions never round-trip through the model, so they answer instantly.
@@ -104,6 +111,51 @@ worker stops itself after 2 minutes idle.
 - Needs the bridge running (`npm start` auto-starts it); without it the
   commands say so instead of failing silently.
 
+## Web Research + Browser Control
+
+Two capabilities sit on top of the desktop bridge — both **free, keyless and
+local** (no paid API, no recurring cost):
+
+**Web research** — questions that need *current* information ("price of gold",
+"latest NVIDIA news", "weather", "current CEO", "who won today's match", or an
+explicit "search the web for X") search the web **first** (`GET /search` →
+`bridge/web-search.js`), then the reply is generated only from the retrieved
+results:
+
+- The console logs `🔎 WEB SEARCH` with every source (title + URL) above the
+  answer, and the reply opens with *"According to the latest information I
+  found…"* with inline `[1] [2]` citations.
+- Results are fed to the model as a bounded system message; it is instructed
+  never to answer from training memory and to say plainly when the results
+  don't contain the answer — it never fabricates.
+- If the search fails (bridge down, network down, every provider down), the
+  failure is **spoken** — *"the web search failed — I couldn't access the web"*
+  — no model answer is invented, and listening continues.
+- Providers are abstract (`providers` map in `bridge/web-search.js`): DuckDuckGo
+  lite/html first, with Bing RSS + Google News RSS merged as free fallbacks —
+  swap engines via `SEARCH_PROVIDER` without touching callers.
+
+**Browser control** — J.A.R.V.I.S opens and drives its own browser window
+(`POST /browser` → `bridge/browser-control.js`, `puppeteer-core` driving the
+Chrome/Edge already installed — no bundled browser, no key):
+
+- Controlled functions only: `newTab`, `googleSearch`, `back`, `forward`,
+  `refresh`, `current`, `closeTab`. The LLM never executes shell commands,
+  page JS, or arbitrary URLs — only these whitelisted actions.
+- URL validation: only well-formed `http/https` links are opened
+  (`javascript:`/`file:`/data URLs are refused, with no fallback opener).
+- One window is launched lazily and kept alive for the bridge's lifetime, so
+  tabs and history **persist between voice commands**.
+- Follow-ups work from short-term context (`last_search_query`,
+  `last_search_results`, `last_opened_url`, `last_browser_action` — capped at
+  10 results): *search* → *open the first result* → *go back* → *refresh*.
+- "Open the official website of X" searches first and scores real results for
+  the official domain (`.ac.in`, `.gov`, `.edu`, token match in the host;
+  Wikipedia/SEO farms penalised) — it never guesses a URL. If nothing
+  qualifies, it says so instead of opening something wrong.
+- Failures (bridge offline, no window, no history) are reported — they never
+  crash the pipeline, and the mic keeps listening.
+
 ## Groq API key (kept out of Git)
 
 Your key lives in `.env` in the project folder — gitignored, so it is never
@@ -139,12 +191,24 @@ this repository.
   with live preview; turns the whole feature on/off
 - `frontend/src/services/mediaControl.js` — media state store + `/media`
   bridge client (volume/brightness commands, shared UI state)
+- `frontend/src/services/webSearch.js` — `/search` bridge client (research
+  queries; returns `{title,url,snippet,source}[]` or an honest failure)
+- `frontend/src/services/browserControl.js` — `/browser` bridge client +
+  short-term context store (`last_search_query/results`, `last_opened_url`,
+  official-site picker) and the voice-facing action dispatcher
 - `frontend/src/components/SystemControls.js` — top-right SYSTEM CONTROLS
   readout (🔊 Volume / ☀️ Brightness, live percentages)
 - `bridge/server.js` — zero-dependency local bridge on `127.0.0.1:4777`
   (`/health`, `/open?kind=url|app|file|folder|find&target=…`, `/groq` — the
-  Groq proxy that attaches the API key from `.env` — and `/media` for
-  system volume/brightness)
+  Groq proxy that attaches the API key from `.env` — `/media` for
+  system volume/brightness, `/search` for web research, and `/browser` for
+  controlled browser actions)
+- `bridge/web-search.js` — free keyless web search behind an abstract
+  provider map (DuckDuckGo → Bing RSS / Google News RSS fallback chain)
+- `bridge/browser-control.js` — controlled browser functions (whitelisted
+  actions, `http/https` URL validation, persistent window via `puppeteer-core`)
+- `bridge/package.json` — bridge dependencies (`puppeteer-core` only; free,
+  no API key, drives the locally installed Chrome/Edge)
 - `bridge/media-worker.ps1` — resident PowerShell worker (Core Audio + WMI)
   behind `/media`; spawned on demand, idle-exits after 2 minutes
 - `bridge/ensure-bridge.js` — starts the bridge for `npm start` if it is down

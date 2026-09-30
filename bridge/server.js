@@ -11,6 +11,8 @@
  * Endpoints:
  *   GET /health
  *   GET /open?kind=url|app|file|folder|find&target=<value>
+ *   GET /search?q=<query>                 → free web research (DuckDuckGo)
+ *   POST /browser {action, url?, query?}  → controlled browser functions
  *
  * Launching rules that matter on Windows:
  *  - Never wait for a program to exit (notepad.exe runs for hours).
@@ -26,6 +28,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// Free web research + controlled browser (both zero-dependency Node, except
+// browser-control which lazily loads puppeteer-core if it is installed).
+const { searchWeb } = require('./web-search.js');
+const browserControl = require('./browser-control.js');
+
 const PORT = 4777;
 const HOST = '127.0.0.1';
 const IS_WIN = process.platform === 'win32';
@@ -33,7 +40,7 @@ const IS_MAC = process.platform === 'darwin';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
@@ -704,6 +711,34 @@ const mediaRequest = (command) =>
   });
 
 // ─── HTTP server ────────────────────────────────────────────────────────────
+// Reads a small JSON body. Resolves the parsed object, false for invalid
+// JSON, or null when the body exceeded the cap. Never throws.
+function readJsonBody(req, maxBytes = 64 * 1024) {
+  return new Promise((resolve) => {
+    let body = '';
+    let tooLarge = false;
+    req.on('data', (chunk) => {
+      if (tooLarge) return;
+      if (body.length + chunk.length > maxBytes) {
+        tooLarge = true;
+        req.destroy();
+        resolve(null);
+        return;
+      }
+      body += chunk;
+    });
+    req.on('error', () => resolve(null));
+    req.on('end', () => {
+      if (tooLarge) return;
+      try {
+        resolve(JSON.parse(body || '{}'));
+      } catch (e) {
+        resolve(false);
+      }
+    });
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS);
@@ -853,6 +888,59 @@ const server = http.createServer(async (req, res) => {
         })
       );
     });
+    return;
+  }
+
+  // ── WEB RESEARCH: free, keyless search → {title,url,snippet,source}[] ──
+  if (url.pathname === '/search') {
+    const q = (url.searchParams.get('q') || '').trim();
+    console.log(`[${new Date().toLocaleTimeString()}] search -> ${q}`);
+    if (!q) {
+      send(400, fail('Missing query (?q=<query>).'));
+      return;
+    }
+    try {
+      const result = await searchWeb(q);
+      send(200, { ok: true, ...result });
+    } catch (e) {
+      // Honest failure — the HUD tells the user the search failed instead of
+      // the model answering from training memory.
+      send(200, { ok: false, error: (e && e.message) || 'Web search failed.' });
+    }
+    return;
+  }
+
+  // ── BROWSER CONTROL: whitelisted actions only, never throws ────────────
+  if (url.pathname === '/browser') {
+    if (req.method !== 'POST') {
+      send(405, fail('Use POST /browser with JSON {action, url?, query?}.'));
+      return;
+    }
+    const parsed = await readJsonBody(req);
+    if (parsed === null) {
+      send(413, fail('Request body too large.'));
+      return;
+    }
+    if (parsed === false) {
+      send(400, fail('Invalid JSON body.'));
+      return;
+    }
+    const action = String(parsed.action || '');
+    if (!browserControl.ACTIONS.includes(action)) {
+      send(
+        400,
+        fail(`action must be one of: ${browserControl.ACTIONS.join(', ')}.`)
+      );
+      return;
+    }
+    console.log(
+      `[${new Date().toLocaleTimeString()}] browser -> ${action}`
+    );
+    const result = await browserControl.exec(action, {
+      url: parsed.url,
+      query: parsed.query,
+    });
+    send(200, result);
     return;
   }
 

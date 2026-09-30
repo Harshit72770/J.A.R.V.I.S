@@ -236,7 +236,8 @@ const hostOf = (value) => {
 // for the words "chrome me".
 const BROWSER_WORDS =
   'google\\s+chrome|chrome|google|browser|edge|internet|web';
-const SEARCH_PREP = 'on|in|from|via|using|through|with|me|mein|par|में|पर';
+const SEARCH_PREP =
+  'on|in|from|via|using|through|with|for|me|mein|par|में|पर';
 
 const SUFFIX_NOISE = new RegExp(
   `\\s+(?:${SEARCH_PREP})\\s+(?:the\\s+)?(?:${BROWSER_WORDS})\\s*$`,
@@ -745,8 +746,154 @@ function matchMediaCommand(raw) {
  * Returns { type, target } for an utterance J.A.R.V.I.S can execute locally,
  * or null when the text should go to the language model instead.
  * type: say | youtube | ytSearch | google | web | site | app | folder |
- *       find | path | vision | media
+ *       find | path | vision | media | browser | research | researchFail
  */
+
+// ─── Current-information questions (web research) ───────────────────────────
+// Matched LAST inside matchLocalCommand, so every local answer (date/time,
+// identity, open, media …) keeps priority. English + Hinglish/Hindi markers.
+const RESEARCH_PATTERNS = [
+  /\b(?:latest|newest|recent|current)\b/i,
+  /\bweather\b|\bmausam\b|मौसम/i,
+  /\bnews\b|\bkhabar\b|खबर/i,
+  /\b(?:who\s+won|winner\s+of|match\s+(?:result|score)|live\s+score|score(?:card)?\s+(?:today|now)?)\b/i,
+  /\b(?:price\s+of|share\s+price|stock\s+price|gold\s+(?:price|rate)|exchange\s+rate|interest\s+rate|fuel\s+price|petrol\s+(?:price|rate)|diesel\s+(?:price|rate))\b/i,
+  /\b(?:who\s+is|who's|who\s+was|who\s+are)\s+(?:the\s+)?(?:current\s+|present\s+|new\s+)?(?:ceo|chief\s+executive|prime\s+minister|president|governor|captain|head\s+coach)\b/i,
+  /\b(?:today'?s|aaj\s+ka)\s+(?:match|news|price|score|result|khabar)\b/i,
+  /\b(?:updates?|breaking)\s+(?:on|about|today)\b/i,
+];
+
+const isResearchQuestion = (text) =>
+  RESEARCH_PATTERNS.some((re) => re.test(text));
+
+const cleanOfficialTarget = (raw) =>
+  String(raw || '')
+    .trim()
+    .replace(/['’]s$/i, '')
+    .replace(/\s+(?:website|site|page)$/i, '')
+    .trim();
+
+// ─── Browser-control follow-up matcher ──────────────────────────────────────
+// Context-free: execution (services/browserControl.js) resolves indices and
+// targets against the stored short-term context (last search results/query).
+function matchBrowserCommand(raw) {
+  const text = String(raw || '')
+    .replace(
+      /^(?:okay\s+|ok\s+|hey\s+|jarvis\s+|please\s+|plz\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+)*/i,
+      ''
+    )
+    .trim();
+  if (!text) return null;
+  let m;
+
+  // ── Tab history: "go back" / "take me back" / "go forward" ──────────────
+  m = text.match(
+    /^(?:(?:go|move|take)(?:\s+us|\s+me)?\s+)?(back(?:wards?|ward)?|forward|forth)(?:\s+to\s+(?:the\s+)?(?:previous|last|next|earlier)\s+(?:page|tab))?$/i
+  );
+  if (m) {
+    const dir = m[1].toLowerCase();
+    return { type: 'browser', action: /^back/.test(dir) ? 'back' : 'forward' };
+  }
+  if (/^(?:pich(?:e|he)\s+jao|पीछे\s+जाओ)$/i.test(text)) {
+    return { type: 'browser', action: 'back' };
+  }
+  if (/^(?:aage\s+jao|आगे\s+जाओ)$/i.test(text)) {
+    return { type: 'browser', action: 'forward' };
+  }
+
+  // ── Refresh ─────────────────────────────────────────────────────────────
+  if (
+    /^(?:refresh|reload)(?:\s+(?:the\s+)?(?:page|tab|screen|site))?$|^(?:the\s+)?(?:page|tab)\s+(?:refresh|reload)(?:\s+करो)?$|^पेज\s+रिफ्रेश(?:\s+करो)?$/i.test(
+      text
+    )
+  ) {
+    return { type: 'browser', action: 'refresh' };
+  }
+
+  // ── Close tab ───────────────────────────────────────────────────────────
+  if (
+    /^close\s+(?:this|the|current)?\s*(?:tab|window)$|^tab\s+band\s+karo$|^टैब\s+बंद\s+करो$/i.test(
+      text
+    )
+  ) {
+    return { type: 'browser', action: 'closeTab' };
+  }
+
+  // ── What page am I on ───────────────────────────────────────────────────
+  if (
+    /^(?:what(?:'s|\s+is)\s+(?:the\s+)?(?:current|this)?\s*(?:page|tab|website|site)(?:\s+(?:url|address))?|which\s+page\s+am\s+i\s+on|current\s+page(?:\s+kya\s+hai)?)$/i.test(
+      text
+    )
+  ) {
+    return { type: 'browser', action: 'current' };
+  }
+
+  // ── Open Nth result of the previous search ──────────────────────────────
+  m = text.match(
+    /^open\s+(?:the\s+)?(first|second|third|fourth|fifth|last|(\d+)(?:st|nd|rd|th)?)\s+result$/i
+  );
+  if (m) {
+    const ordinal = {
+      first: 1,
+      second: 2,
+      third: 3,
+      fourth: 4,
+      fifth: 5,
+      last: 'last',
+    };
+    const key = m[1].toLowerCase();
+    return {
+      type: 'browser',
+      action: 'openResult',
+      index: ordinal[key] !== undefined ? ordinal[key] : parseInt(m[2], 10),
+    };
+  }
+  m = text.match(/^open\s+result(?:\s+number)?\s+(\d+)$/i);
+  if (m) {
+    return { type: 'browser', action: 'openResult', index: parseInt(m[1], 10) };
+  }
+  m = text.match(
+    /^(pehla|dusra|teesra|chautha|paanchva|last)\s+result\s+(?:kholo|open\s+karo)$/i
+  );
+  if (m) {
+    const ordinal = {
+      pehla: 1,
+      dusra: 2,
+      teesra: 3,
+      chautha: 4,
+      paanchva: 5,
+      last: 'last',
+    };
+    return {
+      type: 'browser',
+      action: 'openResult',
+      index: ordinal[m[1].toLowerCase()],
+    };
+  }
+
+  // ── Official website (§9: search + pick, never guess the URL) ───────────
+  m = text.match(
+    /^open\s+(?:the\s+)?official\s+(?:website|site|page)(?:\s+(?:of|for)\s+(.+))?$/i
+  );
+  if (m) {
+    return { type: 'browser', action: 'openOfficial', target: cleanOfficialTarget(m[1]) };
+  }
+  m = text.match(/^open\s+(?:the\s+)?official\s+(.+?)\s+(?:website|site|page)$/i);
+  if (m) {
+    return { type: 'browser', action: 'openOfficial', target: cleanOfficialTarget(m[1]) };
+  }
+  m = text.match(/^open\s+(?:the\s+)?(.+?)\s+official\s+(?:website|site|page)$/i);
+  if (m) {
+    return { type: 'browser', action: 'openOfficial', target: cleanOfficialTarget(m[1]) };
+  }
+  m = text.match(/^(.+?)\s+ki\s+official\s+(?:website|site)$/i);
+  if (m) {
+    return { type: 'browser', action: 'openOfficial', target: cleanOfficialTarget(m[1]) };
+  }
+
+  return null;
+}
+
 export function matchLocalCommand(raw) {
   const text = normalize(raw);
   if (!text) return null;
@@ -758,6 +905,25 @@ export function matchLocalCommand(raw) {
   // ── 0b) MEDIA: system volume + screen brightness ───────────────────────
   const mediaAction = matchMediaCommand(text);
   if (mediaAction) return mediaAction;
+
+  // ── 0c) BROWSER CONTROL: tabs, history, search-result follow-ups ───────
+  const browserAction = matchBrowserCommand(text);
+  if (browserAction) return browserAction;
+
+  // ── 0d) WEB RESEARCH (explicit): "search the web for X" ────────────────
+  // Spec §8 distinction: "search google for X" opens a Google tab (step 2),
+  // while "search the web for X" is RESEARCH — search first, then answer
+  // from the retrieved results (TEST 8).
+  let r;
+  r = text.match(
+    /^(?:okay\s+|ok\s+|hey\s+|jarvis\s+|please\s+|plz\s+)?(?:can\s+you\s+|could\s+you\s+|please\s+|do\s+(?:a\s+)?)?search\s+(?:the\s+)?(?:web|internet|online|world\s+wide\s+web)\s+(?:for|about|on|up|regarding|around)\s+(.+)$/i
+  );
+  if (r) return { type: 'research', query: r[1].trim() };
+  // Hinglish / Hindi: "internet par search karo X" · "web search karo X"
+  r = text.match(
+    /^(?:please\s+|jarvis\s+)?(?:web|online|internet|इंटरनेट)\s*(?:पर|par)?\s*(?:search|sarch|सर्च)\s*(?:karo|kar\s+do|do|करो|कर\s+दो)?\s+(?:for\s+|about\s+)?(.+)$/i
+  );
+  if (r && r[1] && r[1].trim()) return { type: 'research', query: r[1].trim() };
 
   let m;
 
@@ -883,6 +1049,11 @@ export function matchLocalCommand(raw) {
   }
   if (openTarget) return classifyOpenTarget(openTarget);
 
+  // ── 7) WEB RESEARCH (current information) ──────────────────────────────
+  // Only reached when steps 0-6 matched nothing — so local answers (facts,
+  // opens, media …) always win, and open-ended chat still goes to the model.
+  if (isResearchQuestion(text)) return { type: 'research', query: text };
+
   return null;
 }
 
@@ -932,6 +1103,11 @@ export async function runLocalCommand(action) {
   // Date / day / time / identity are fixed local copy — nothing to execute,
   // and no reason to wait on the bridge.
   if (action.type === 'say') return { ok: true };
+  // A failed web search is reported by the HUD (spoken failure, no model
+  // answer invented) — nothing to execute either.
+  if (action.type === 'researchFail') {
+    return { ok: false, error: action.error || 'Web search failed.' };
+  }
   // Screen vision owns its own pipeline (live frame + streaming reply) and
   // must never be dispatched to the bridge.
   if (action.type === 'vision') {
@@ -951,7 +1127,35 @@ export async function runLocalCommand(action) {
     }
   }
 
+  // ── Browser control (back/forward/refresh/results/official sites) ──────
+  // Executed by the bridge's controlled browser window; resolves follow-up
+  // context (last search results) itself. Never throws.
+  if (action.type === 'browser') {
+    try {
+      const { executeBrowserAction } = await import('./browserControl.js');
+      return await executeBrowserAction(action);
+    } catch (e) {
+      return { ok: false, error: 'Browser control module failed to load.' };
+    }
+  }
+
   const online = await checkBridge(true);
+
+  // "search google for X" prefers J.A.R.V.I.S's controlled browser window
+  // (keeps the tab, history and follow-ups like "open the first result"
+  // working); when the controlled window is unavailable, fall back to the
+  // classic plain Google tab below — same behaviour as before.
+  if (action.type === 'google' && online) {
+    try {
+      const { googleSearch } = await import('./browserControl.js');
+      const r = await googleSearch(action.target);
+      // ok → done; a definitive failure (not "automation unavailable") →
+      // report it instead of silently opening a second tab.
+      if (r.ok || !r.fallback) return r;
+    } catch (e) {
+      /* fall through to the classic Google tab */
+    }
+  }
 
   const link = linkUrlFor(action);
   if (link) return openLink(link, online);
@@ -1121,6 +1325,26 @@ export function describeAction(action, isHindi, langCode) {
           ? 'माफ़ कीजिए सर, यह बदल नहीं पाया।'
           : 'Sorry Sir, I could not change that.',
       };
+    case 'browser':
+      // Replaced by describeBrowserResult once the bridge replies; this is
+      // only the pending line + generic failure voice.
+      return {
+        pending: `🌐 BROWSER // ${browserActionLabel(action)}`,
+        done: '✅ BROWSER // action completed',
+        speak: isHindi ? 'ब्राउज़र में कर रहा हूँ, सर।' : 'Working on it, Sir.',
+        failSpeak: isHindi
+          ? 'माफ़ कीजिए सर, यह ब्राउज़र कमांड नहीं हो पाया।'
+          : 'Sorry Sir, that browser command did not work.',
+      };
+    case 'researchFail':
+      return {
+        pending: '🔎 WEB SEARCH // querying search providers…',
+        done: '⚠ WEB SEARCH FAILED // could not reach any search provider',
+        speak: '',
+        failSpeak: isHindi
+          ? 'क्षमा करें सर, अभी वेब सर्च नहीं हो पाया — इंटरनेट तक पहुँच नहीं पाई।'
+          : "Sorry Sir, the web search failed — I couldn't access the web right now.",
+      };
     default:
       return {
         pending: `⚡ ACTION // ${name}`,
@@ -1281,5 +1505,168 @@ export function describeMediaResult(action, result, isHindi) {
                 result.muted ? ' and it is muted' : ''
               }, Sir.`,
       };
+  }
+}
+
+/** Short pending-line description for a browser action. */
+function browserActionLabel(action) {
+  switch (action.action) {
+    case 'back':
+      return 'going back…';
+    case 'forward':
+      return 'going forward…';
+    case 'refresh':
+      return 'refreshing the page…';
+    case 'closeTab':
+      return 'closing the tab…';
+    case 'current':
+      return 'reading the current page…';
+    case 'newTab':
+      return `opening ${action.url || 'a new tab'}…`;
+    case 'openResult':
+      return `opening result #${action.index}…`;
+    case 'openOfficial':
+      return `finding the official website${
+        action.target ? ` of ${action.target}` : ''
+      }…`;
+    default:
+      return 'working…';
+  }
+}
+
+/**
+ * Result-aware copy for browser actions — runs AFTER the bridge replies, so
+ * it speaks what actually happened ("Went back, Sir." / "Opened the official
+ * website, Sir.") and the specific reason when it did not.
+ */
+export function describeBrowserResult(action, result, isHindi) {
+  const fail = (error) => {
+    const err =
+      result && result.error ? result.error : 'no reply from the Desktop Bridge';
+    let speak;
+    if (/previous page/i.test(err)) {
+      speak = isHindi
+        ? 'इस टैब में पीछे कोई पेज नहीं है, सर।'
+        : 'There is no previous page in this tab, Sir.';
+    } else if (/next page/i.test(err)) {
+      speak = isHindi
+        ? 'इस टैब में आगे कोई पेज नहीं है, सर।'
+        : 'There is no next page in this tab, Sir.';
+    } else if (/only open tab/i.test(err)) {
+      speak = isHindi
+        ? 'यही एकमात्र खुला टैब है, सर।'
+        : 'That is the only open tab, Sir.';
+    } else if (/official website/i.test(err)) {
+      speak = isHindi
+        ? 'माफ़ कीजिए सर, आधिकारिक वेबसाइट नहीं मिली।'
+        : 'Sorry Sir, I could not find an official website.';
+    } else if (/search results|run a search first/i.test(err)) {
+      speak = isHindi
+        ? 'पहले कोई सर्च करें, सर।'
+        : 'Please run a search first, Sir.';
+    } else if (/not a valid http/i.test(err)) {
+      speak = isHindi
+        ? 'माफ़ कीजिए सर, यह लिंक मान्य नहीं है।'
+        : 'Sorry Sir, that is not a valid link.';
+    } else if (/offline|bridge/i.test(err)) {
+      speak = isHindi
+        ? 'डेस्कटॉप ब्रिज ऑफ़लाइन है, सर।'
+        : 'The desktop bridge is offline, Sir.';
+    } else {
+      speak = isHindi
+        ? 'माफ़ कीजिए सर, यह ब्राउज़र कमांड नहीं हो पाया।'
+        : 'Sorry Sir, that browser command did not work.';
+    }
+    return { ok: false, done: `⚠ ACTION FAILED // ${err}`, speak };
+  };
+
+  if (!result || !result.ok) return fail(result && result.error);
+
+  const done = (text) => ({ ok: true, done: text });
+  switch (action.action) {
+    case 'back':
+      return {
+        ok: true,
+        done: '✅ BROWSER // went back',
+        speak: isHindi ? 'पीछे चला गया, सर।' : 'Went back, Sir.',
+      };
+    case 'forward':
+      return {
+        ok: true,
+        done: '✅ BROWSER // went forward',
+        speak: isHindi ? 'आगे चला गया, सर।' : 'Went forward, Sir.',
+      };
+    case 'refresh':
+      return {
+        ok: true,
+        done: `✅ BROWSER // page refreshed${result.url ? ` — ${result.url}` : ''}`,
+        speak: isHindi ? 'पेज रिफ्रेश कर दिया, सर।' : 'Page refreshed, Sir.',
+      };
+    case 'closeTab':
+      return {
+        ok: true,
+        done: '✅ BROWSER // tab closed',
+        speak: isHindi ? 'टैब बंद कर दिया, सर।' : 'Closed the tab, Sir.',
+      };
+    case 'current': {
+      const title = (result.title || '').trim();
+      const url = (result.url || '').trim();
+      return {
+        ok: true,
+        done: `✅ BROWSER // ${title || url || 'unknown'}${
+          url ? ` — ${url}` : ''
+        }`,
+        speak: title
+          ? isHindi
+            ? `आप ${title} पर हैं, सर।`
+            : `You are on ${title}, Sir.`
+          : url
+          ? `You are on ${url}, Sir.`
+          : 'I could not read the page, Sir.',
+      };
+    }
+    case 'newTab': {
+      const label = hostOf(result.opened || action.url);
+      return {
+        ok: true,
+        done: `✅ BROWSER // opened ${label}${result.title ? ` — ${result.title}` : ''}`,
+        speak: isHindi ? `${label} खोल दिया, सर।` : `Opened ${label}, Sir.`,
+      };
+    }
+    case 'openResult': {
+      const pick = result.result;
+      const n = action.index;
+      const ordinal =
+        n === 'last'
+          ? 'last'
+          : `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
+      return {
+        ok: true,
+        done: `✅ BROWSER // [${ordinal} result] ${pick ? pick.title : ''}${
+          pick ? ` — ${pick.url}` : ''
+        }`,
+        speak: isHindi
+          ? `${ordinal} नतीजा खोल दिया, सर।`
+          : `Opened the ${ordinal} result, Sir.`,
+      };
+    }
+    case 'openOfficial': {
+      const pick = result.official || result.result;
+      const label = pick ? hostOf(pick.url) : 'the official website';
+      return {
+        ok: true,
+        done: `✅ BROWSER // official site opened — ${label}${
+          pick && pick.url ? ` — ${pick.url}` : ''
+        }`,
+        speak: isHindi
+          ? `${action.target || ''} की आधिकारिक वेबसाइट खोल दी, सर।`.replace(
+              '  ',
+              ' '
+            )
+          : `Opened the official website, Sir.`,
+      };
+    }
+    default:
+      return done('✅ BROWSER // done');
   }
 }

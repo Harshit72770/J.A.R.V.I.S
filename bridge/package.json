@@ -1,0 +1,13 @@
+{
+  "name": "jarvis-desktop-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "J.A.R.V.I.S desktop bridge: Groq proxy, system control, web search, controlled browser",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

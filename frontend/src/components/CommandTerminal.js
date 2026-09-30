@@ -12,6 +12,7 @@ import {
   runLocalCommand,
   describeAction,
   describeMediaResult,
+  describeBrowserResult,
   checkBridge,
 } from '../services/commandActions';
 import {
@@ -20,6 +21,8 @@ import {
   grabScreenFrame,
 } from '../services/screenVision';
 import { refreshMediaState } from '../services/mediaControl';
+import { searchWeb } from '../services/webSearch';
+import { recordBrowserSearch } from '../services/browserControl';
 
 // ─── Speech helpers ──────────────────────────────────────────────────────────
 // Cap on kept log entries so long sessions never bloat the DOM.
@@ -733,10 +736,22 @@ const CommandTerminal = ({
       action.type === 'media'
         ? describeMediaResult(action, result, isHindi)
         : null;
+    // Browser replies describe what actually happened ("Went back, Sir." /
+    // "Opened the official website, Sir.").
+    const browserCopy =
+      action.type === 'browser'
+        ? describeBrowserResult(action, result, isHindi)
+        : null;
     const outcome = result.ok
-      ? `${mediaCopy ? mediaCopy.done : described.done}${
-          result.opened ? ` → ${result.opened}` : ''
-        }`
+      ? browserCopy
+        ? browserCopy.done
+        : mediaCopy
+        ? mediaCopy.done
+        : `${described.done}${
+            result.opened ? ` → ${result.opened}` : ''
+          }`
+      : browserCopy
+      ? browserCopy.done
       : mediaCopy
       ? mediaCopy.done
       : `⚠ ACTION FAILED // ${result.error}`;
@@ -754,7 +769,9 @@ const CommandTerminal = ({
       const tts = createTtsSession(langCode);
       ttsSessionRef.current = tts;
       tts.push(
-        mediaCopy
+        browserCopy
+          ? browserCopy.speak
+          : mediaCopy
           ? mediaCopy.speak
           : result.ok
           ? described.speak
@@ -845,7 +862,26 @@ const CommandTerminal = ({
 
     // Local action (open / search / play ...) — handled instantly, no model.
     const localAction = matchLocalCommand(cleanPrompt);
-    if (localAction) {
+
+    // ── WEB RESEARCH: search the web FIRST, then answer from the results ──
+    // When current information is required the reply must come from the
+    // retrieved results — never from the model's training memory. A failed
+    // search is SPOKEN as a failure (and the mic keeps listening).
+    let research = null;
+    if (localAction && localAction.type === 'research') {
+      research = await searchWeb(localAction.query);
+      if (id !== requestIdRef.current) return; // superseded by barge-in
+      if (!research.ok) {
+        await handleLocalAction(
+          { type: 'researchFail', error: research.error },
+          cleanPrompt,
+          currentLang
+        );
+        return;
+      }
+      // Short-term context so "open the first result" works afterwards.
+      recordBrowserSearch(localAction.query, research.results);
+    } else if (localAction) {
       await handleLocalAction(localAction, cleanPrompt, currentLang);
       return;
     }
@@ -871,6 +907,26 @@ const CommandTerminal = ({
     const activeModel = groqModelRef.current;
     const isGuard = activeModel.includes('prompt-guard');
 
+    // Research answers show their sources above the reply (log-only — the
+    // URLs are never read aloud).
+    const sourcesLog = research
+      ? {
+          id: uidRef.current++,
+          text:
+            `🔎 WEB SEARCH // "${research.query}" via ${research.provider} — ` +
+            research.results
+              .slice(0, 6)
+              .map((rr, i) => `[${i + 1}] ${rr.title} — ${rr.url}`)
+              .join('  ·  '),
+          sender: 'SYSTEM',
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+        }
+      : null;
+
     const initialJarvisLog = {
       id: jarvisLogId,
       text: '',
@@ -893,9 +949,34 @@ const CommandTerminal = ({
         content: l.text,
       }));
 
+    // Research mode: the model must answer from the retrieved results only.
+    const researchDirective = research
+      ? '\n\nWEB RESEARCH MODE — live web-search results for the user\'s latest question follow this message (system role, numbered [1], [2], …). Rules:\n- Answer ONLY from those results; never from training memory.\n- Begin with "According to the latest information I found…" (or the equivalent in the user\'s language).\n- Cite sources inline as [1], [2] where useful.\n- If the results do not contain the answer, clearly say the search did not find it — do not guess.\n- Keep it short and conversational; the reply is spoken aloud.'
+      : '';
+
     const messages = [
-      { role: 'system', content: buildJarvisSystemPrompt(currentLang) },
+      {
+        role: 'system',
+        content: buildJarvisSystemPrompt(currentLang) + researchDirective,
+      },
       ...historyContext,
+      ...(research
+        ? [
+            {
+              role: 'system',
+              content:
+                `SEARCH RESULTS for "${research.query}" (provider: ${research.provider}):\n` +
+                research.results
+                  .map(
+                    (rr, i) =>
+                      `[${i + 1}] ${rr.title}\n    URL: ${rr.url}${
+                        rr.snippet ? `\n    ${rr.snippet}` : ''
+                      }`
+                  )
+                  .join('\n'),
+            },
+          ]
+        : []),
       { role: 'user', content: cleanPrompt },
     ];
 
@@ -907,7 +988,12 @@ const CommandTerminal = ({
     ttsSessionRef.current = tts;
 
     setCommandLogs((prev) =>
-      [...prev, userLog, initialJarvisLog].slice(-LOG_LIMIT)
+      [
+        ...prev,
+        userLog,
+        ...(sourcesLog ? [sourcesLog] : []),
+        initialJarvisLog,
+      ].slice(-LOG_LIMIT)
     );
     setIsGenerating(true);
 
