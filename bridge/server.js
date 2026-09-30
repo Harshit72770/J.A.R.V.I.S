@@ -12,6 +12,7 @@
  *   GET /health
  *   GET /open?kind=url|app|file|folder|find&target=<value>
  *   GET /search?q=<query>                 → free web research (DuckDuckGo)
+ *   GET /ytsearch?q=<query>               → free YouTube results (context)
  *   POST /browser {action, url?, query?}  → controlled browser functions
  *
  * Launching rules that matter on Windows:
@@ -30,7 +31,7 @@ const path = require('path');
 
 // Free web research + controlled browser (both zero-dependency Node, except
 // browser-control which lazily loads puppeteer-core if it is installed).
-const { searchWeb } = require('./web-search.js');
+const { searchWeb, searchYouTube } = require('./web-search.js');
 const browserControl = require('./browser-control.js');
 
 const PORT = 4777;
@@ -906,6 +907,23 @@ const server = http.createServer(async (req, res) => {
       // Honest failure — the HUD tells the user the search failed instead of
       // the model answering from training memory.
       send(200, { ok: false, error: (e && e.message) || 'Web search failed.' });
+    }
+    return;
+  }
+
+  // ── YOUTUBE SEARCH: free keyless results for the contextual YT flow ────
+  if (url.pathname === '/ytsearch') {
+    const q = (url.searchParams.get('q') || '').trim();
+    console.log(`[${new Date().toLocaleTimeString()}] ytsearch -> ${q}`);
+    if (!q) {
+      send(400, fail('Missing query (?q=<query>).'));
+      return;
+    }
+    try {
+      const result = await searchYouTube(q);
+      send(200, { ok: true, ...result });
+    } catch (e) {
+      send(200, { ok: false, error: (e && e.message) || 'YouTube search failed.' });
     }
     return;
   }

@@ -39,6 +39,27 @@ const NAV_TIMEOUT = 15000;
 const MAX_QUERY = 200;
 const MAX_URL = 2048;
 
+// The exact sentence spoken when Google demands human verification.
+// Detection only — we never solve, bypass or retry a CAPTCHA.
+const CAPTCHA_MESSAGE =
+  "Google is asking for human verification, so I can't continue the automated Google search.";
+
+// Google's CAPTCHA markers: the /sorry/ redirect URL or the "unusual
+// traffic" / reCAPTCHA challenge markup.
+async function detectGoogleCaptcha(page) {
+  try {
+    const u = page.url();
+    if (!/google\./i.test(u)) return false;
+    if (/\/sorry\/|ipv4\.google|recaptcha/i.test(u)) return true;
+    const html = await page.content();
+    return /unusual traffic|our systems have detected|g-recaptcha|recaptcha\/api|I'm not a robot/i.test(
+      html
+    );
+  } catch (e) {
+    return false; // could not read the page → treat as "no CAPTCHA seen"
+  }
+}
+
 let puppeteer = null; // null = not tried yet, false = could not load
 let browserPromise = null;
 let lastPage = null;
@@ -182,9 +203,24 @@ async function googleSearch(queryRaw) {
     .trim()
     .slice(0, MAX_QUERY);
   if (!q) return { ok: false, error: 'The search query was empty.' };
-  return newTab(
+  const result = await newTab(
     `https://www.google.com/search?q=${encodeURIComponent(q)}`
   );
+  if (!result.ok) return result; // navigation failure — never retried either
+  // ── CAPTCHA: detect and STOP GRACEFULLY ──────────────────────────────
+  // Google sometimes flags automated traffic with a reCAPTCHA/"unusual
+  // traffic" page. We do NOT solve it, bypass it, or retry — we tell the
+  // user and stop (the tab is left open so the human can act).
+  if (lastPage && (await detectGoogleCaptcha(lastPage))) {
+    return {
+      ok: false,
+      captcha: true,
+      fallback: false, // ← must NOT fall back to another Google tab (retry)
+      error: CAPTCHA_MESSAGE,
+      opened: result.opened,
+    };
+  }
+  return result;
 }
 
 async function historyStep(delta) {

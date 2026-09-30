@@ -1,67 +1,123 @@
 /**
- * Browser control client + short-term browser/search context.
+ * Browser control client + short-term contexts.
  *
  * Browser actions run in J.A.R.V.I.S's controlled browser window through the
  * desktop bridge (POST /browser → bridge/browser-control.js, a whitelist of
- * controlled functions — no arbitrary shell or page JS).
+ * controlled functions — no arbitrary shell or page JS). Ordinary link opens
+ * (YouTube, "open google", websites) still go through the plain bridge
+ * /open path — no Google automation anywhere except an explicit
+ * "search google for X", where the bridge DETECTS CAPTCHA and stops
+ * gracefully (never solves, bypasses, or retries it).
  *
- * This module also owns the SHORT-TERM context that makes follow-ups work:
- *   last_search_query   "search google for NIT Raipur"
- *   last_search_results   → "open the first result"
- *   last_opened_url       → last tab J.A.R.V.I.S opened
- *   last_browser_action   → what happened most recently
- * Bounded on purpose (10 results, nothing else kept) — no unlimited history.
+ * TWO SEPARATE CONTEXTS — never mixed (spec):
+ *   browser context: active_browser · active_tab · active_site ·
+ *                    last_browser_action
+ *   web-search context: last_search_query · last_search_results ·
+ *                    last_search_source   (results capped at 10)
  */
 
 const BRIDGE_URL = 'http://127.0.0.1:4777';
 const MAX_SEARCH_RESULTS = 10;
 
-let state = {
-  last_search_query: '',
-  last_search_results: [],
-  last_opened_url: '',
+// ── Browser context (what window/tab/site is active) ────────────────────────
+let browserState = {
+  active_browser: null, // 'jarvis-browser' | 'chrome' | 'hud-tab' | …
+  active_tab: null, // URL of the most recent tab we opened/acted on
+  active_site: null, // 'youtube' | 'google' | <hostname> — context for follow-ups
   last_browser_action: null,
 };
-const listeners = new Set();
+const browserListeners = new Set();
 
-export const getBrowserContext = () => state;
+// ── Web-search context (what was searched — web or YouTube) ─────────────────
+let searchState = {
+  last_search_query: '',
+  last_search_results: [], // [{title,url,snippet,source}] capped
+  last_search_source: null, // provider name | 'google' | 'youtube' | …
+};
+const searchListeners = new Set();
 
-/** Subscribe to context changes; returns the unsubscribe function. */
+export const getBrowserContext = () => browserState;
+export const getSearchContext = () => searchState;
+
+/** Subscribe to browser-context changes; returns the unsubscribe function. */
 export function subscribeBrowserContext(listener) {
-  listeners.add(listener);
-  listener(state);
-  return () => listeners.delete(listener);
+  browserListeners.add(listener);
+  listener(browserState);
+  return () => browserListeners.delete(listener);
 }
 
-function commit(patch) {
-  state = { ...state, ...patch };
-  listeners.forEach((fn) => {
+/** Subscribe to web-search-context changes; returns the unsubscribe function. */
+export function subscribeSearchContext(listener) {
+  searchListeners.add(listener);
+  listener(searchState);
+  return () => searchListeners.delete(listener);
+}
+
+function notify(set, next) {
+  set.forEach((fn) => {
     try {
-      fn(state);
+      fn(next);
     } catch (e) {
       /* a bad subscriber must not break the rest */
     }
   });
 }
 
-/** Remember a search (and its results) so follow-up commands can use them. */
-export function recordBrowserSearch(query, results) {
-  commit({
+// youtube.com / youtu.be → 'youtube'; google.* → 'google'; else hostname.
+function siteOf(url) {
+  try {
+    let s = String(url || '').trim();
+    if (s && !/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `https://${s}`; // bare host
+    const host = new URL(s).hostname.replace(/^www\./, '');
+    if (/(^|\.)youtube\.com$/.test(host) || /(^|\.)youtu\.be$/.test(host)) {
+      return 'youtube';
+    }
+    if (/(^|\.)google\.[a-z.]+$/.test(host)) return 'google';
+    return host;
+  } catch (e) {
+    return null;
+  }
+}
+
+const browserLabel = (via) =>
+  via === 'jarvis-browser'
+    ? 'jarvis-browser'
+    : via === 'tab'
+    ? 'hud-tab'
+    : via || 'chrome';
+
+/** Record a browser action (updates active_tab/active_site when a URL applies). */
+export function recordBrowserAction(action, url, via) {
+  browserState = {
+    ...browserState,
+    ...(url
+      ? { active_tab: String(url).slice(0, 2048), active_site: siteOf(url) }
+      : {}),
+    ...(via ? { active_browser: browserLabel(via) } : {}),
+    last_browser_action: action,
+  };
+  notify(browserListeners, browserState);
+}
+
+/** Record the most recently opened URL (browser context only). */
+export function recordBrowserOpen(url, via) {
+  recordBrowserAction('open', url, via);
+}
+
+/**
+ * Record a WEB-SEARCH (not browser) — search context only, never touches
+ * browser state (spec: do not mix the two).
+ */
+export function recordSearchContext(query, results, source) {
+  searchState = {
     last_search_query: String(query || '').slice(0, 200),
     last_search_results: (Array.isArray(results) ? results : []).slice(
       0,
       MAX_SEARCH_RESULTS
     ),
-    last_browser_action: 'search',
-  });
-}
-
-/** Remember the most recently opened URL. */
-export function recordBrowserOpen(url) {
-  commit({
-    last_opened_url: String(url || ''),
-    last_browser_action: 'open',
-  });
+    last_search_source: source || null,
+  };
+  notify(searchListeners, searchState);
 }
 
 // ─── Bridge transport (never throws) ────────────────────────────────────────
@@ -129,36 +185,84 @@ async function plainOpen(url) {
 async function openInNewTab(url) {
   const r = await post('newTab', { url });
   if (r.ok) {
-    recordBrowserOpen(r.opened);
+    recordBrowserAction('newTab', r.opened, 'jarvis-browser');
     return r;
   }
-  if (r.fallback) return plainOpen(url);
+  if (r.fallback) {
+    const plain = await plainOpen(url);
+    if (plain.ok) recordBrowserAction('newTab', plain.opened, plain.via);
+    return plain;
+  }
   return r;
 }
 
 /**
- * "Search Google for X" — opens the Google search in the controlled window
- * AND quietly retrieves organic results so "open the first result" works on
- * the next command (context only; the search itself never fails because of
- * the context lookup).
+ * Quiet context retrieval via the web_search tool (HTTP only — NEVER a
+ * Google browser search) so follow-ups like "open the first result" work.
+ */
+async function quietContextSearch(q, source) {
+  try {
+    const { searchWeb, searchYouTube } = await import('./webSearch.js');
+    const s = source === 'youtube' ? await searchYouTube(q) : await searchWeb(q);
+    recordSearchContext(q, s.ok ? s.results : [], s.ok ? s.provider : source);
+  } catch (e) {
+    recordSearchContext(q, [], source);
+  }
+}
+
+/**
+ * Lazily (re)load stored search results when the context holds only the
+ * query (e.g. "search for Arijit Singh" while YouTube was active).
+ */
+async function resolveSearchResults() {
+  if (searchState.last_search_results.length) {
+    return searchState.last_search_results;
+  }
+  const q = searchState.last_search_query;
+  if (!q) return [];
+  try {
+    const { searchWeb, searchYouTube } = await import('./webSearch.js');
+    const s =
+      searchState.last_search_source === 'youtube'
+        ? await searchYouTube(q)
+        : await searchWeb(q);
+    if (s.ok && s.results.length) {
+      recordSearchContext(q, s.results, s.provider || searchState.last_search_source);
+      return s.results;
+    }
+  } catch (e) {
+    /* fall through → empty */
+  }
+  return [];
+}
+
+/**
+ * "Search Google for X" — EXPLICIT Google searches only. Runs in the
+ * controlled window; if Google serves a CAPTCHA the bridge returns
+ * {captcha:true} and we STOP GRACEFULLY (no retry, no second tab, no
+ * context recording). Context for follow-ups comes from the free
+ * web_search tool, not from Google automation.
  */
 export async function googleSearch(query) {
   const q = String(query || '').trim().slice(0, 200);
   if (!q) return { ok: false, error: 'The search query was empty.' };
   const r = await post('googleSearch', { query: q });
-  if (r.ok) recordBrowserOpen(r.opened);
-  try {
-    const { searchWeb } = await import('./webSearch.js');
-    const s = await searchWeb(q);
-    recordBrowserSearch(q, s.ok ? s.results : []);
-  } catch (e) {
-    recordBrowserSearch(q, []);
+  if (r.ok) {
+    recordBrowserAction('googleSearch', r.opened, 'jarvis-browser');
+    await quietContextSearch(q, null); // web_search tool — independent of Google
+    return r;
   }
-  if (!r.ok && r.fallback) {
-    // Controlled window unavailable → plain Google tab (old behaviour).
-    return plainOpen(
+  if (r.captcha) return r; // ← detected: tell the user, do NOT retry
+  if (r.fallback) {
+    // Controlled window unavailable → plain Google tab (no automation at all).
+    const plain = await plainOpen(
       `https://www.google.com/search?q=${encodeURIComponent(q)}`
     );
+    if (plain.ok) {
+      recordBrowserAction('googleSearch', plain.opened, plain.via);
+      await quietContextSearch(q, null);
+    }
+    return plain;
   }
   return r;
 }
@@ -224,15 +328,22 @@ export async function executeBrowserAction(action) {
       case 'forward':
       case 'refresh': {
         const r = await post(a);
-        if (r.ok) commit({ last_browser_action: a });
+        if (r.ok) recordBrowserAction(a, r.url || null);
         return r;
       }
-      case 'current':
-        return await post('current');
+      case 'current': {
+        const r = await post('current');
+        if (r.ok) recordBrowserAction('current', r.url || null);
+        return r;
+      }
 
       case 'closeTab': {
         const r = await post('closeTab');
-        if (r.ok) commit({ last_browser_action: 'closeTab' });
+        if (r.ok) {
+          // Which tab is now active? (keeps active_tab honest after closing)
+          const now = await post('current');
+          recordBrowserAction('closeTab', now.ok ? now.url : null);
+        }
         return r;
       }
 
@@ -242,13 +353,13 @@ export async function executeBrowserAction(action) {
       }
 
       case 'openResult': {
-        const ctx = state;
-        const results = ctx.last_search_results || [];
+        const results = await resolveSearchResults();
         if (!results.length) {
           return {
             ok: false,
-            error:
-              'I do not have recent search results — run a search first, Sir.',
+            error: searchState.last_search_query
+              ? 'I could not retrieve recent search results — run a search again, Sir.'
+              : 'I do not have recent search results — run a search first, Sir.',
           };
         }
         let index = action.index;
@@ -264,13 +375,12 @@ export async function executeBrowserAction(action) {
         }
         const pick = results[index - 1];
         const r = await openInNewTab(pick.url);
-        if (r.ok) commit({ last_browser_action: 'openResult' });
+        if (r.ok) recordBrowserAction('openResult', r.opened);
         return r.ok ? { ...r, result: pick } : r;
       }
 
       case 'openOfficial': {
-        const ctx = state;
-        const target = String(action.target || ctx.last_search_query || '')
+        const target = String(action.target || searchState.last_search_query || '')
           .trim()
           .slice(0, 200);
         if (!target) {
@@ -280,12 +390,14 @@ export async function executeBrowserAction(action) {
         let pick = null;
         if (
           !action.target ||
-          ctx.last_search_query.toLowerCase().includes(target.toLowerCase())
+          searchState.last_search_query
+            .toLowerCase()
+            .includes(target.toLowerCase())
         ) {
           pick = pickOfficialResult(
-            ctx.last_search_results,
+            searchState.last_search_results,
             target,
-            ctx.last_search_query
+            searchState.last_search_query
           );
         }
         // 2) Not found → search for it (do NOT guess the URL), then pick.
@@ -295,7 +407,7 @@ export async function executeBrowserAction(action) {
           for (const q of queries) {
             const s = await searchWeb(q);
             if (s.ok && s.results.length) {
-              recordBrowserSearch(q, s.results);
+              recordSearchContext(q, s.results, s.provider);
               pick = pickOfficialResult(s.results, q, q);
               if (pick) break;
             }
@@ -308,7 +420,7 @@ export async function executeBrowserAction(action) {
           };
         }
         const r = await openInNewTab(pick.url);
-        if (r.ok) commit({ last_browser_action: 'openOfficial' });
+        if (r.ok) recordBrowserAction('openOfficial', r.opened);
         return r.ok ? { ...r, result: pick, official: pick } : r;
       }
 

@@ -20,6 +20,12 @@ const ytSearchUrl = (q) =>
 const googleUrl = (q) =>
   `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 
+// The exact sentence spoken when Google demands human verification. The
+// bridge DETECTS the CAPTCHA page and returns this text — it is never
+// solved, bypassed, or retried (architecture rule).
+export const GOOGLE_CAPTCHA_MESSAGE =
+  "Google is asking for human verification, so I can't continue the automated Google search.";
+
 // ─── Websites openable by name ──────────────────────────────────────────────
 // "open facebook" / "open chatgpt on chrome" → straight to the site.
 const KNOWN_SITES = {
@@ -828,9 +834,10 @@ function matchBrowserCommand(raw) {
     return { type: 'browser', action: 'current' };
   }
 
-  // ── Open Nth result of the previous search ──────────────────────────────
+  // ── Open/play Nth result of the previous search ─────────────────────────
+  // ("play the first result" resolves the stored web/YouTube search context.)
   m = text.match(
-    /^open\s+(?:the\s+)?(first|second|third|fourth|fifth|last|(\d+)(?:st|nd|rd|th)?)\s+result$/i
+    /^(?:open|play)\s+(?:the\s+)?(first|second|third|fourth|fifth|last|(\d+)(?:st|nd|rd|th)?)\s+result$/i
   );
   if (m) {
     const ordinal = {
@@ -848,7 +855,7 @@ function matchBrowserCommand(raw) {
       index: ordinal[key] !== undefined ? ordinal[key] : parseInt(m[2], 10),
     };
   }
-  m = text.match(/^open\s+result(?:\s+number)?\s+(\d+)$/i);
+  m = text.match(/^(?:open|play)\s+result(?:\s+number)?\s+(\d+)$/i);
   if (m) {
     return { type: 'browser', action: 'openResult', index: parseInt(m[1], 10) };
   }
@@ -894,7 +901,10 @@ function matchBrowserCommand(raw) {
   return null;
 }
 
-export function matchLocalCommand(raw) {
+// ctx (optional): { activeSite } — the active browser site ('youtube' | …)
+// enables contextual follow-ups ("search for X" while YouTube is open).
+// Harness/default calls omit it → context-free behaviour is unchanged.
+export function matchLocalCommand(raw, ctx = {}) {
   const text = normalize(raw);
   if (!text) return null;
 
@@ -945,12 +955,15 @@ export function matchLocalCommand(raw) {
     return { type: 'ytSearch', target: isEmptyQuery(q) ? 'music' : q };
   }
 
-  // ── 2) SEARCH → Google (YouTube when specified) ────────────────────────
+  // ── 2) SEARCH → the free web_search tool by default (NO Chrome), the
+  //       Google tab only when Google is said explicitly, YouTube when
+  //       that site is the active one ─────────────────────────────────────
   m = text.match(
-    /^(?:okay\s+|ok\s+|hey\s+|please\s+|plz\s+|jarvis\s+)?(?:google\s+search|search\s+on\s+google|search\s+in\s+google|search|google|look\s+up|look\s+for|find\s+out)\s+(?:for\s+|about\s+|up\s+|me\s+|on\s+google\s+|on\s+the\s+web\s+)?(.+)$/i
+    /^(?:okay\s+|ok\s+|hey\s+|please\s+|plz\s+|jarvis\s+)?(google\s+search|search\s+on\s+google|search\s+in\s+google|search|google|look\s+up|look\s+for|find\s+out)\s+(?:for\s+|about\s+|up\s+|me\s+|on\s+google\s+|on\s+the\s+web\s+)?(.+)$/i
   );
   if (m) {
-    let q = m[1].trim();
+    const verb = (m[1] || '').toLowerCase();
+    let q = m[2].trim();
     if (/\s+(?:on|in|from)\s+(?:youtube|youtu\.be|yt)\s*$/i.test(q)) {
       // "search X on youtube" is a YouTube search, not a Google one
       q = stripYoutube(
@@ -958,8 +971,20 @@ export function matchLocalCommand(raw) {
       );
       if (!isEmptyQuery(q)) return { type: 'ytSearch', target: q };
     } else {
+      // Google ONLY when the user says it (verb "google" / "search on
+      // google", or browser words wrapped around the query).
+      const explicitGoogle =
+        /google/i.test(verb) || SUFFIX_NOISE.test(q) || PREFIX_NOISE.test(q);
       const cleaned = cleanSearchQuery(q);
-      if (!isEmptyQuery(cleaned)) return { type: 'google', target: cleaned };
+      if (!isEmptyQuery(cleaned)) {
+        // YouTube is the active site → search INSIDE YouTube (no Google).
+        if (ctx.activeSite === 'youtube' && !explicitGoogle) {
+          return { type: 'ytSearch', target: cleaned };
+        }
+        if (explicitGoogle) return { type: 'google', target: cleaned };
+        // Ordinary "search for X" → the free web_search tool (no Chrome).
+        return { type: 'research', query: cleaned };
+      }
       // The words were only browser instructions ("search on chrome") →
       // open Google itself instead of searching for that phrase.
       if (cleaned !== q) return { type: 'web' };
@@ -968,13 +993,24 @@ export function matchLocalCommand(raw) {
   } else {
     // "<query> search karo / google karo / सर्च करो"
     m = text.match(
-      /^(.+?)\s+(?:ko\s+|को\s+)?(?:search|सर्च|google|गूगल)\s*(?:karo|kardo|kar\s+do|करो|कर\s+दो|करना)$/i
+      /^(.+?)\s+(?:ko\s+|को\s+)?(search|सर्च|google|गूगल)\s*(?:karo|kardo|kar\s+do|करो|कर\s+दो|करना)$/i
     );
     if (m && !isEmptyQuery(m[1].trim())) {
-      const raw = m[1].trim();
-      const cleaned = cleanSearchQuery(raw);
-      if (!isEmptyQuery(cleaned)) return { type: 'google', target: cleaned };
-      if (cleaned !== raw) return { type: 'web' };
+      const q = m[1].trim();
+      // "X google karo" names Google explicitly; plain "X search karo" does not.
+      const explicitGoogle =
+        /^(?:google|गूगल)$/i.test((m[2] || '').trim()) ||
+        SUFFIX_NOISE.test(q) ||
+        PREFIX_NOISE.test(q);
+      const cleaned = cleanSearchQuery(q);
+      if (!isEmptyQuery(cleaned)) {
+        if (ctx.activeSite === 'youtube' && !explicitGoogle) {
+          return { type: 'ytSearch', target: cleaned };
+        }
+        if (explicitGoogle) return { type: 'google', target: cleaned };
+        return { type: 'research', query: cleaned };
+      }
+      if (cleaned !== q) return { type: 'web' };
     }
   }
 
@@ -1158,7 +1194,27 @@ export async function runLocalCommand(action) {
   }
 
   const link = linkUrlFor(action);
-  if (link) return openLink(link, online);
+  if (link) {
+    const r = await openLink(link, online);
+    if (r.ok) {
+      try {
+        const { recordSearchContext, recordBrowserOpen } = await import(
+          './browserControl.js'
+        );
+        // "search for X" while YouTube is active → remember the query so
+        // "play the first result" can resolve it later (results are
+        // fetched lazily by the browser context, not here).
+        if (action.type === 'ytSearch') {
+          recordSearchContext(action.target, [], 'youtube');
+        }
+        // Browser context (separate store): active_tab / active_site.
+        if (r.opened) recordBrowserOpen(r.opened, r.via);
+      } catch (e) {
+        /* context recording must never fail the command */
+      }
+    }
+    return r;
+  }
 
   if (action.type === 'app') {
     if (online) {

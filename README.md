@@ -58,8 +58,10 @@ The console footer shows `🖥️ BRIDGE ONLINE` / `🖥️ BRIDGE OFFLINE`.
 | "what is the brightness" | Reports the current brightness |
 | "search the web for python tutorials" / "internet par search karo X" | **Web research** — searches first, then answers from the retrieved results with sources |
 | "who is the current CEO of Microsoft" / "latest news about NVIDIA" / "price of gold today" / "who won today's match" / "what is the weather" | Recognised as *current-information* questions → answered from live web results, never from memory |
-| "search google for NIT Raipur" / "google X" | Google results in the **controlled browser window** (falls back to a plain tab if the window can't be controlled) |
-| "open the first result" / "open result 2" / "open the last result" | Opens that result of your previous search |
+| "search for gold price" / "search cricket scores" / "look up X" / "X search karo" | Ordinary searches use the **web_search tool — no Chrome opens**; the reply comes from the results with sources |
+| "search google for NIT Raipur" / "google X" | Google results in the **controlled browser window** — only when you *say* Google. If Google shows a CAPTCHA, Jarvis detects it and says *"Google is asking for human verification, so I can't continue the automated Google search."* and stops (never solves, bypasses or retries) |
+| "search for Arijit Singh" *(while YouTube is the active site)* | Searches **inside YouTube** (keyless YouTube results — no Google involved) |
+| "open the first result" / "play the first result" / "open result 2" / "open the last result" | Opens/plays that result of your previous search (web **or** YouTube) |
 | "open the official website of NIT Raipur" / "open the official NIT Raipur website" | Searches first, picks the official domain from real results (never guesses a URL) |
 | "go back" / "go forward" / "refresh the page" / "close this tab" | Browser history + tab control in the controlled window |
 | "what is the current page" / "which page am i on" | Reads back the page title + URL |
@@ -120,7 +122,10 @@ local** (no paid API, no recurring cost):
 "latest NVIDIA news", "weather", "current CEO", "who won today's match", or an
 explicit "search the web for X") search the web **first** (`GET /search` →
 `bridge/web-search.js`), then the reply is generated only from the retrieved
-results:
+results. The same tool answers ordinary **search commands** — "search for X",
+"search X karo", "look up X" reply from the results with sources instead of
+opening a browser tab. **Chrome is never opened for research**; only an
+explicit "search google for X" / "google X" reaches a Google tab:
 
 - The console logs `🔎 WEB SEARCH` with every source (title + URL) above the
   answer, and the reply opens with *"According to the latest information I
@@ -146,9 +151,24 @@ Chrome/Edge already installed — no bundled browser, no key):
   (`javascript:`/`file:`/data URLs are refused, with no fallback opener).
 - One window is launched lazily and kept alive for the bridge's lifetime, so
   tabs and history **persist between voice commands**.
-- Follow-ups work from short-term context (`last_search_query`,
-  `last_search_results`, `last_opened_url`, `last_browser_action` — capped at
-  10 results): *search* → *open the first result* → *go back* → *refresh*.
+- Follow-ups read **two separate bounded contexts** — browser state and
+  web-search state are never mixed:
+  - *browser context* — `active_browser`, `active_tab`, `active_site`,
+    `last_browser_action` (which window/tab/site is active — `active_site`
+    is what makes "search for X" search *inside* YouTube when YouTube is open),
+  - *web-search context* — `last_search_query`, `last_search_results`,
+    `last_search_source` (capped at 10 results): *search* → *open the first
+    result* → *go back* → *refresh*.
+- **CAPTCHA policy (explicit Google searches only):** when Google serves a
+  reCAPTCHA / "unusual traffic" page, the bridge detects it (`/sorry/` URL or
+  challenge markup) and stops gracefully — Jarvis speaks *"Google is asking for
+  human verification, so I can't continue the automated Google search."* It
+  never solves, bypasses, or retries Google, and no second tab is opened.
+- **YouTube control stays separate:** "open YouTube" opens it in plain Chrome;
+  with YouTube as the active site, "search for X" uses the keyless
+  `GET /ytsearch` (results page in Chrome + stored context) and "play the
+  first result" opens the stored first video — no Google search anywhere in
+  that flow.
 - "Open the official website of X" searches first and scores real results for
   the official domain (`.ac.in`, `.gov`, `.edu`, token match in the host;
   Wikipedia/SEO farms penalised) — it never guesses a URL. If nothing
@@ -191,22 +211,27 @@ this repository.
   with live preview; turns the whole feature on/off
 - `frontend/src/services/mediaControl.js` — media state store + `/media`
   bridge client (volume/brightness commands, shared UI state)
-- `frontend/src/services/webSearch.js` — `/search` bridge client (research
-  queries; returns `{title,url,snippet,source}[]` or an honest failure)
-- `frontend/src/services/browserControl.js` — `/browser` bridge client +
-  short-term context store (`last_search_query/results`, `last_opened_url`,
-  official-site picker) and the voice-facing action dispatcher
+- `frontend/src/services/webSearch.js` — `/search` + `/ytsearch` bridge
+  clients (research queries and YouTube context; returns
+  `{title,url,snippet,source}[]` or an honest failure)
+- `frontend/src/services/browserControl.js` — `/browser` bridge client with
+  **split contexts** — browser store (`active_browser/active_tab/
+  active_site/last_browser_action`) and web-search store
+  (`last_search_query/results/source`) — plus the official-site picker and
+  the voice-facing action dispatcher
 - `frontend/src/components/SystemControls.js` — top-right SYSTEM CONTROLS
   readout (🔊 Volume / ☀️ Brightness, live percentages)
 - `bridge/server.js` — zero-dependency local bridge on `127.0.0.1:4777`
   (`/health`, `/open?kind=url|app|file|folder|find&target=…`, `/groq` — the
   Groq proxy that attaches the API key from `.env` — `/media` for
-  system volume/brightness, `/search` for web research, and `/browser` for
-  controlled browser actions)
+  system volume/brightness, `/search` for web research, `/ytsearch` for
+  YouTube context, and `/browser` for controlled browser actions)
 - `bridge/web-search.js` — free keyless web search behind an abstract
-  provider map (DuckDuckGo → Bing RSS / Google News RSS fallback chain)
+  provider map (DuckDuckGo → Bing RSS / Google News RSS fallback chain) plus
+  the keyless `searchYouTube()` results fetcher
 - `bridge/browser-control.js` — controlled browser functions (whitelisted
-  actions, `http/https` URL validation, persistent window via `puppeteer-core`)
+  actions, `http/https` URL validation, CAPTCHA detection for explicit Google
+  searches, persistent window via `puppeteer-core`)
 - `bridge/package.json` — bridge dependencies (`puppeteer-core` only; free,
   no API key, drives the locally installed Chrome/Edge)
 - `bridge/media-worker.ps1` — resident PowerShell worker (Core Audio + WMI)

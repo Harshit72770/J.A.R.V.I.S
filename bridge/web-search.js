@@ -329,4 +329,56 @@ async function searchWeb(query) {
   throw lastError || new Error('Web search failed.');
 }
 
-module.exports = { searchWeb, providers };
+/**
+ * YouTube search (free, keyless) — supports the contextual YouTube flow:
+ * "search for X" while YouTube is the active site → structured video results,
+ * so "play the first result" can open the exact video without any Google
+ * automation.
+ *
+ *   searchYouTube(query) → { query, provider: 'youtube', results: [...] }
+ * Same {title,url,snippet,source} shape as searchWeb — plain HTTP fetch of
+ * the public results page (no API key, no cost, no browser).
+ */
+const unescapeJson = (s) =>
+  String(s || '')
+    .replace(/\\u0026/g, '&')
+    .replace(/\\u003d/g, '=')
+    .replace(/\\u0025/g, '%')
+    .replace(/\\u002F/g, '/')
+    .replace(/\\"/g, '"')
+    .replace(/\\n/g, ' ')
+    .replace(/\\\\/g, '\\');
+
+async function searchYouTube(query) {
+  const q = String(query || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim()
+    .slice(0, MAX_QUERY);
+  if (!q) throw new Error('The search query was empty.');
+  const html = await fetchHtml(
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&hl=en&gl=IN`
+  );
+  const results = [];
+  const seen = new Set();
+  // Each result block: "videoRenderer":{"videoId":"…" … "title":{"runs":[{"text":"…"
+  const re =
+    /"videoRenderer":\{"videoId":"([^"]+)"[\s\S]{0,3000}?"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/g;
+  let m;
+  while ((m = re.exec(html)) && results.length < MAX_RESULTS) {
+    const id = m[1];
+    if (!/[\w-]{11}/.test(id) || seen.has(id)) continue;
+    const title = unescapeJson(m[2]).trim();
+    if (!title) continue;
+    seen.add(id);
+    results.push({
+      title,
+      url: `https://www.youtube.com/watch?v=${id}`,
+      snippet: '',
+      source: 'youtube.com',
+    });
+  }
+  if (!results.length) throw new Error('YouTube returned no results.');
+  return { query: q, provider: 'youtube', results };
+}
+
+module.exports = { searchWeb, searchYouTube, providers };

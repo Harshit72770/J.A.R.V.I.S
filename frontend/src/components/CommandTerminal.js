@@ -14,6 +14,7 @@ import {
   describeMediaResult,
   describeBrowserResult,
   checkBridge,
+  GOOGLE_CAPTCHA_MESSAGE,
 } from '../services/commandActions';
 import {
   isScreenVisionLive,
@@ -22,7 +23,7 @@ import {
 } from '../services/screenVision';
 import { refreshMediaState } from '../services/mediaControl';
 import { searchWeb } from '../services/webSearch';
-import { recordBrowserSearch } from '../services/browserControl';
+import { recordSearchContext, getBrowserContext } from '../services/browserControl';
 
 // ─── Speech helpers ──────────────────────────────────────────────────────────
 // Cap on kept log entries so long sessions never bloat the DOM.
@@ -775,6 +776,8 @@ const CommandTerminal = ({
           ? mediaCopy.speak
           : result.ok
           ? described.speak
+          : result.captcha
+          ? GOOGLE_CAPTCHA_MESSAGE // exact sentence — detected, never retried
           : described.failSpeak
       );
       tts.finish();
@@ -861,7 +864,11 @@ const CommandTerminal = ({
     const hasDevanagari = /[\u0900-\u097F]/.test(cleanPrompt);
 
     // Local action (open / search / play ...) — handled instantly, no model.
-    const localAction = matchLocalCommand(cleanPrompt);
+    // The active site enables contextual follow-ups (YouTube → "search for X"
+    // searches inside YouTube; browser state stays separate from search state).
+    const localAction = matchLocalCommand(cleanPrompt, {
+      activeSite: getBrowserContext().active_site,
+    });
 
     // ── WEB RESEARCH: search the web FIRST, then answer from the results ──
     // When current information is required the reply must come from the
@@ -879,8 +886,13 @@ const CommandTerminal = ({
         );
         return;
       }
-      // Short-term context so "open the first result" works afterwards.
-      recordBrowserSearch(localAction.query, research.results);
+      // Short-term search context so "play/open the first result" works
+      // afterwards (web-search context — never mixed with browser state).
+      recordSearchContext(
+        localAction.query,
+        research.results,
+        research.provider
+      );
     } else if (localAction) {
       await handleLocalAction(localAction, cleanPrompt, currentLang);
       return;
