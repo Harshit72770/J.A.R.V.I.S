@@ -6,8 +6,5 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
-  },
-  "dependencies": {
-    "puppeteer-core": "^24.0.0"
   }
 }

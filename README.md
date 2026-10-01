@@ -59,14 +59,14 @@ The console footer shows `🖥️ BRIDGE ONLINE` / `🖥️ BRIDGE OFFLINE`.
 | "search the web for python tutorials" / "internet par search karo X" | **Web research** — searches first, then answers from the retrieved results with sources |
 | "who is the current CEO of Microsoft" / "latest news about NVIDIA" / "price of gold today" / "who won today's match" / "what is the weather" | Recognised as *current-information* questions → answered from live web results, never from memory |
 | "search for gold price" / "search cricket scores" / "look up X" / "X search karo" | Ordinary searches use the **web_search tool — no Chrome opens**; the reply comes from the results with sources |
-| "search google for NIT Raipur" / "google X" | Google results in the **controlled browser window** — only when you *say* Google. If Google shows a CAPTCHA, Jarvis detects it and says *"Google is asking for human verification, so I can't continue the automated Google search."* and stops (never solves, bypasses or retries) |
+| "search google for NIT Raipur" / "google X" | Google results in the **existing Chrome session** — only when you *say* Google. If Google shows a CAPTCHA, Jarvis detects it and says *"Google is asking for human verification, so I can't continue the automated Google search."* and stops (never solves, bypasses or retries) |
 | "search for Arijit Singh" *(while YouTube is the active site)* | Searches **inside YouTube** (keyless YouTube results — no Google involved) |
 | "open the first result/link" / "play this first song" / "open link 2" / "open the last result" | Opens/plays that result of your previous search (web **or** YouTube — a YouTube result plays in place, reusing the player tab) |
 | "pause the music" / "pause karo" / "resume" / "stop the music" | Music Player pause / resume / stop |
 | "play the next song" / "skip this song" / "play the previous song" | Next / previous track in the queue |
 | "forward 10 seconds" / "go back 10 seconds" / "rewind 30 seconds" | Seeks the **real** video position (±N seconds) |
 | "open the official website of NIT Raipur" / "open the official NIT Raipur website" | Searches first, picks the official domain from real results (never guesses a URL) |
-| "go back" / "go forward" / "refresh the page" / "close this tab" | Browser history + tab control in the controlled window |
+| "go back" / "go forward" / "refresh the page" / "close this tab" | Browser history + tab control in the current Chrome window |
 | "what is the current page" / "which page am i on" | Reads back the page title + URL |
 
 Anything the matcher does not recognise goes to Groq as a normal chat reply.
@@ -125,15 +125,17 @@ top-right corner — same glass-panel design language, no second UI:
   thumbnail, title and channel/artist with a clickable progress bar,
   `current / duration`, and ⏮ · ↶10 · ▶/⏸ · 10↷ · ⏭ (every button is
   implemented; prev/next grey out when the queue can't go further).
-- **One source of truth** — the bridge reads the actual `<video>` element of
-  the open YouTube watch page (`GET/POST /music` → `bridge/music-control.js`),
-  so pausing inside the YouTube tab flips the panel to paused, a song that
-  ends auto-advances the queue, and there are no fake timers. The panel polls
-  once a second **only while a track is loaded**, and stops itself when idle.
+- **One source of truth** — the bridge reads the real YouTube player of the
+  open watch page — its actual controls, title and position (`GET/POST /music`
+  → `bridge/music-control.js`), so pausing inside the YouTube tab flips the
+  panel to paused, a song that ends auto-advances the queue, and there are no
+  fake timers. The panel polls once a second **only while a track is loaded**,
+  and stops itself when idle.
 - **Voice + text** — "play Believer" (or "open youtube and play X", "X bajao")
-  runs the free keyless YouTube results fetch, plays the most relevant result
-  in the **existing controlled browser window** (an open YouTube tab is reused
-  — never a new window per command), then pause / resume / stop / next /
+  runs the free keyless YouTube results fetch and plays the most relevant
+  result in the **existing Chrome session** — the running window and its open
+  YouTube tab are reused; Chrome is launched only when it isn't running yet,
+  never once per command — then pause / resume / stop / next /
   previous / "skip this song" / "forward 10 seconds" / "go back 10 seconds" /
   "play the first result" all work against the real player.
 - **Controlled tool only** — the LLM can pick from a fixed whitelist
@@ -142,11 +144,12 @@ top-right corner — same glass-panel design language, no second UI:
   downloaded (streaming playback only).
 - **Failure-safe** — if a video fails to load or autoplay is blocked, the
   panel shows a small error (`Unable to play this song.` / a Play button) and
-  Jarvis keeps accepting commands. If the controlled window is unavailable,
+  Jarvis keeps accepting commands. If no Chrome session can be driven,
   "play X" falls back to the classic plain YouTube results tab.
-- **FREE** — keyless YouTube results (`bridge/web-search.js`), the already
-  installed `puppeteer-core` window and local bridge polling. No API key, no
-  quota, no subscription, no new dependency.
+- **FREE** — keyless YouTube results (`bridge/web-search.js`), the Chrome
+  you already have (reused through the local Windows UI Automation worker)
+  and local bridge polling. No API key, no quota, no subscription, no new
+  dependency.
 
 ## Web Research + Browser Control
 
@@ -175,17 +178,21 @@ explicit "search google for X" / "google X" reaches a Google tab:
   lite/html first, with Bing RSS + Google News RSS merged as free fallbacks —
   swap engines via `SEARCH_PROVIDER` without touching callers.
 
-**Browser control** — J.A.R.V.I.S opens and drives its own browser window
-(`POST /browser` → `bridge/browser-control.js`, `puppeteer-core` driving the
-Chrome/Edge already installed — no bundled browser, no key):
+**Browser control** — J.A.R.V.I.S drives the Chrome session you already have
+(`POST /browser` → `bridge/browser-control.js` → the resident
+`bridge/ui-worker.ps1` Windows UI Automation worker — no bundled browser, no
+debug port, no key):
 
 - Controlled functions only: `newTab`, `googleSearch`, `back`, `forward`,
   `refresh`, `current`, `closeTab`. The LLM never executes shell commands,
   page JS, or arbitrary URLs — only these whitelisted actions.
 - URL validation: only well-formed `http/https` links are opened
   (`javascript:`/`file:`/data URLs are refused, with no fallback opener).
-- One window is launched lazily and kept alive for the bridge's lifetime, so
-  tabs and history **persist between voice commands**.
+- Chrome is launched only when it isn't running yet (`chrome.exe <url>` is
+  Chrome's own singleton handshake — the new tab joins the existing session),
+  and every later command reuses that one running session, so tabs and
+  history **persist between voice commands** and no second window or process
+  is ever started.
 - Follow-ups read **two separate bounded contexts** — browser state and
   web-search state are never mixed:
   - *browser context* — `active_browser`, `active_tab`, `active_site`,
@@ -272,12 +279,17 @@ this repository.
   the keyless `searchYouTube()` results fetcher
 - `bridge/browser-control.js` — controlled browser functions (whitelisted
   actions, `http/https` URL validation, CAPTCHA detection for explicit Google
-  searches, persistent window via `puppeteer-core`)
+  searches, session reuse: singleton Chrome launch + shared `uiOp`/`findUrl`
+  worker calls)
 - `bridge/music-control.js` — controlled music tool (whitelisted play ·
   pause · resume · stop · seek · next · previous · getState over the real
-  `<video>` state; reuses browser-control's window, bounded queue)
-- `bridge/package.json` — bridge dependencies (`puppeteer-core` only; free,
-  no API key, drives the locally installed Chrome/Edge)
+  player state; drives the same Chrome session through browser-control's
+  session API, bounded queue)
+- `bridge/ui-worker.ps1` — resident PowerShell UI Automation worker (window
+  and tab discovery, omnibox navigation, player/toolbar control) behind
+  `/browser` and `/music`; spawned on demand, idle-exits after 2 minutes
+- `bridge/package.json` — bridge dependencies (**none** — the bridge is
+  zero-dependency; free, no API key, drives the locally installed Chrome)
 - `bridge/media-worker.ps1` — resident PowerShell worker (Core Audio + WMI)
   behind `/media`; spawned on demand, idle-exits after 2 minutes
 - `bridge/ensure-bridge.js` — starts the bridge for `npm start` if it is down

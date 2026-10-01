@@ -31,8 +31,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// Free web research + controlled browser (both zero-dependency Node, except
-// browser-control which lazily loads puppeteer-core if it is installed).
+// Free web research + controlled browser (both zero-dependency Node — the
+// browser tool drives the user's own Chrome session via a UIA worker).
 const { searchWeb, searchYouTube } = require('./web-search.js');
 const browserControl = require('./browser-control.js');
 const musicControl = require('./music-control.js');
