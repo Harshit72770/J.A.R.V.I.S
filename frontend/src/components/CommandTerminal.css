@@ -576,7 +576,14 @@
 }
 
 .terminal-input-field {
-  flex: 1;
+  /* Shrink ONLY this field: ~72% of the width it occupied as flex:1
+     (chevron + gaps + TRANSMIT ≈ 114px stay untouched), compact height. */
+  flex: 0 0 auto;
+  width: calc(72% - 80px);
+  /* pass the freed space along so TRANSMIT stays pinned to the right edge */
+  margin-right: auto;
+  height: 12px;
+  padding: 0;
   background: transparent;
   border: none;
   outline: none;

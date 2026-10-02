@@ -1,0 +1,728 @@
+/* ─── JARVIS DASHBOARD — monitoring page (route /dashboard) ─────────────────
+   Reuses the exact design language of the existing HUD (SystemControls /
+   MusicPlayer / ScreenVision glass panels): dark translucent cards, cyan
+   hairlines, clipped corners, Orbitron headers + Rajdhani body type, and the
+   established accent palette (cyan / purple / green / amber / red). New
+   classes only — nothing here restyles the Home page or any existing panel. */
+
+.dashboard {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1350px;
+  margin: 0 auto;
+  padding: 96px 24px 36px; /* clears the fixed floating navbar dock */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Shared glass shell — same skin as .system-controls / .music-player */
+.dk-header,
+.dk-card,
+.dk-panel {
+  background: rgba(4, 14, 20, 0.72);
+  border: 1px solid rgba(0, 240, 255, 0.24);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  clip-path: polygon(
+    0 10px,
+    10px 0,
+    100% 0,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    0 100%
+  );
+}
+
+/* ── §1 Header ───────────────────────────────────────────────────────────── */
+.dk-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 13px 20px;
+}
+
+.dk-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  color: #00f0ff;
+  text-shadow: 0 0 14px rgba(0, 240, 255, 0.5);
+}
+
+.dk-title-mark {
+  margin-right: 6px;
+  opacity: 0.75;
+}
+
+.dk-header-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.dk-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: 'Orbitron', monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  padding: 5px 11px;
+  border: 1px solid;
+}
+
+.dk-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 7px currentColor;
+  animation: dk-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dk-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.dk-status--online {
+  color: #2eff8b;
+  border-color: rgba(46, 255, 139, 0.5);
+  background: rgba(46, 255, 139, 0.08);
+}
+
+.dk-status--offline {
+  color: #ff7a86;
+  border-color: rgba(255, 122, 134, 0.5);
+  background: rgba(255, 122, 134, 0.08);
+}
+
+.dk-status--starting {
+  color: #ffd257;
+  border-color: rgba(255, 210, 87, 0.5);
+  background: rgba(255, 210, 87, 0.08);
+}
+
+.dk-header-time {
+  font-family: 'Orbitron', monospace;
+  font-size: 19px;
+  font-weight: 700;
+  color: #00f0ff;
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+}
+
+.dk-header-date {
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.05em;
+  color: rgba(200, 232, 245, 0.85);
+}
+
+.dk-header-session {
+  font-family: 'Orbitron', monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  color: rgba(140, 180, 195, 0.8);
+}
+
+.dk-header-session b {
+  font-size: 11px;
+  color: #00f0ff;
+  margin-left: 5px;
+}
+
+/* ── §2 System overview cards ────────────────────────────────────────────── */
+.dk-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.dk-card {
+  padding: 11px 14px 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.dk-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.16);
+  font-family: 'Orbitron', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  color: rgba(0, 240, 255, 0.92);
+}
+
+.dk-led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2eff8b;
+  box-shadow: 0 0 6px rgba(46, 255, 139, 0.9);
+}
+
+.dk-card-value {
+  font-family: 'Orbitron', monospace;
+  font-size: 27px;
+  font-weight: 700;
+  line-height: 1;
+  color: #00f0ff;
+  text-shadow: 0 0 12px rgba(0, 240, 255, 0.4);
+}
+
+.dk-card-value.is-na {
+  color: #7f8b95;
+  text-shadow: none;
+}
+
+.dk-card-sub {
+  margin-top: 6px;
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  color: rgba(160, 200, 215, 0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 15px;
+}
+
+.dk-spark {
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-top: 9px;
+  opacity: 0.9;
+}
+
+/* ── Panels (performance / core status / now playing / activity / stats) ── */
+.dk-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dk-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 16px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.16);
+  font-family: 'Orbitron', monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: rgba(0, 240, 255, 0.92);
+}
+
+.dk-panel-sub {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: rgba(0, 240, 255, 0.5);
+  text-align: right;
+}
+
+/* ── §3 Performance chart ────────────────────────────────────────────────── */
+.dk-chart-wrap {
+  height: 200px;
+  padding: 12px 14px 0;
+}
+
+.dk-chart {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.dk-grid {
+  stroke: rgba(0, 240, 255, 0.08);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.dk-grid-base {
+  stroke: rgba(0, 240, 255, 0.2);
+}
+
+.dk-line-cpu,
+.dk-line-ram,
+.dk-line-gpu {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.dk-line-cpu {
+  stroke: #00f0ff;
+}
+
+.dk-line-ram {
+  stroke: #a855f7;
+  stroke-width: 1.6;
+  opacity: 0.9;
+}
+
+.dk-line-gpu {
+  stroke: #2eff8b;
+  stroke-width: 1.6;
+  opacity: 0.9;
+}
+
+.dk-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 10px 16px 13px;
+}
+
+.dk-legend-item {
+  font-family: 'Orbitron', monospace;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: rgba(160, 200, 215, 0.85);
+}
+
+.dk-legend-item b {
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.dk-legend-cpu b {
+  color: #00f0ff;
+}
+
+.dk-legend-ram b {
+  color: #a855f7;
+}
+
+.dk-legend-gpu b {
+  color: #2eff8b;
+}
+
+.dk-legend-note {
+  margin-left: auto;
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: rgba(140, 180, 195, 0.6);
+}
+
+/* ── Two-column rows ─────────────────────────────────────────────────────── */
+.dk-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+/* ── §4 Core status ──────────────────────────────────────────────────────── */
+.dk-core-list {
+  padding: 4px 0;
+}
+
+.dk-core-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 16px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.06);
+}
+
+.dk-core-row:last-child {
+  border-bottom: none;
+}
+
+.dk-core-name {
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgba(214, 240, 250, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dk-core-note {
+  font-family: 'Orbitron', monospace;
+  font-size: 7.5px;
+  letter-spacing: 0.1em;
+  color: rgba(140, 180, 195, 0.65);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dk-core-state {
+  font-family: 'Orbitron', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.dk-core-state--online {
+  color: #2eff8b;
+}
+
+.dk-core-state--offline {
+  color: #ff7a86;
+}
+
+.dk-core-state--starting {
+  color: #ffd257;
+}
+
+.dk-core-state--na {
+  color: #8fa3ad;
+}
+
+/* ── §6 Now playing ──────────────────────────────────────────────────────── */
+.dk-np {
+  padding: 12px 16px 14px;
+}
+
+.dk-np-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.dk-np-thumb {
+  width: 72px;
+  height: 41px;
+  object-fit: cover;
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  background: rgba(0, 240, 255, 0.08);
+  flex: 0 0 auto;
+}
+
+.dk-np-thumb-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.dk-np-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dk-np-title {
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: rgba(214, 240, 250, 0.97);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dk-np-channel {
+  margin-top: 3px;
+  font-family: 'Orbitron', monospace;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  color: rgba(0, 240, 255, 0.75);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dk-np-state {
+  flex: 0 0 auto;
+  font-family: 'Orbitron', monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  color: #2eff8b;
+  border: 1px solid rgba(46, 255, 139, 0.45);
+  padding: 3px 7px;
+  align-self: flex-start;
+}
+
+.dk-np-progress {
+  position: relative;
+  height: 5px;
+  background: rgba(0, 240, 255, 0.12);
+}
+
+.dk-np-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(0, 240, 255, 0.55), #00f0ff);
+  transition: width 0.3s linear;
+}
+
+.dk-np-times {
+  display: flex;
+  justify-content: space-between;
+  margin: 5px 0 10px;
+  font-family: 'Orbitron', monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgba(0, 240, 255, 0.85);
+}
+
+.dk-np-controls {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.dk-np-btn {
+  min-width: 34px;
+  height: 26px;
+  padding: 0 7px;
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  line-height: 1;
+  color: rgba(0, 240, 255, 0.95);
+  background: rgba(0, 240, 255, 0.07);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dk-np-btn:hover:not(:disabled) {
+  background: rgba(0, 240, 255, 0.18);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.35);
+}
+
+.dk-np-btn:active:not(:disabled) {
+  background: rgba(0, 240, 255, 0.3);
+}
+
+.dk-np-btn-seek {
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.dk-np-play {
+  min-width: 44px;
+  font-size: 13px;
+  background: rgba(0, 240, 255, 0.14);
+}
+
+.dk-np-error {
+  margin-top: 8px;
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: #ff7a86;
+  word-break: break-word;
+}
+
+/* ── §5 Recent activity ──────────────────────────────────────────────────── */
+.dk-act-list {
+  padding: 4px 0;
+}
+
+.dk-act-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 16px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.06);
+}
+
+.dk-act-row:last-child {
+  border-bottom: none;
+}
+
+.dk-act-time {
+  font-family: 'Orbitron', monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: rgba(0, 240, 255, 0.75);
+}
+
+.dk-act-icon {
+  width: 18px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.dk-act-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dk-act-body b {
+  flex: 0 0 auto;
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: rgba(214, 240, 250, 0.95);
+  white-space: nowrap;
+}
+
+.dk-act-body em {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-style: normal;
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: rgba(140, 180, 195, 0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dk-act-state {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.dk-act-state.is-ok {
+  color: #2eff8b;
+}
+
+.dk-act-state.is-err {
+  color: #ff7a86;
+}
+
+/* ── §7 Session statistics ───────────────────────────────────────────────── */
+.dk-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 14px 16px 10px;
+}
+
+.dk-stat {
+  text-align: center;
+  padding: 10px 4px;
+  background: rgba(0, 240, 255, 0.05);
+  border: 1px solid rgba(0, 240, 255, 0.16);
+}
+
+.dk-stat span {
+  display: block;
+  margin-bottom: 7px;
+  font-family: 'Orbitron', monospace;
+  font-size: 7.5px;
+  letter-spacing: 0.16em;
+  color: rgba(140, 180, 195, 0.85);
+}
+
+.dk-stat b {
+  font-family: 'Orbitron', monospace;
+  font-size: 19px;
+  font-weight: 700;
+  color: #00f0ff;
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
+  white-space: nowrap;
+}
+
+.dk-stat b.is-ok {
+  color: #2eff8b;
+  text-shadow: 0 0 10px rgba(46, 255, 139, 0.35);
+}
+
+.dk-stat b.is-err {
+  color: #ff7a86;
+  text-shadow: 0 0 10px rgba(255, 122, 134, 0.35);
+}
+
+.dk-foot {
+  margin: 4px 0 0;
+  padding: 9px 16px 13px;
+  border-top: 1px solid rgba(0, 240, 255, 0.08);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: 0.03em;
+  color: rgba(140, 180, 195, 0.7);
+}
+
+/* ── Empty states ────────────────────────────────────────────────────────── */
+.dk-empty {
+  padding: 26px 16px;
+  text-align: center;
+  font-family: 'Rajdhani', 'Noto Sans Devanagari', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: rgba(200, 232, 245, 0.6);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .dk-row {
+    grid-template-columns: 1fr;
+  }
+
+  .dk-header {
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard {
+    padding: 88px 12px 28px;
+    gap: 12px;
+  }
+
+  .dk-title {
+    font-size: 15px;
+    letter-spacing: 0.2em;
+  }
+
+  .dk-header-time {
+    font-size: 16px;
+  }
+
+  .dk-cards {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  .dk-card-value {
+    font-size: 22px;
+  }
+
+  .dk-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .dk-core-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .dk-core-note {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dk-status-dot {
+    animation: none;
+  }
+
+  .dk-np-progress-fill {
+    transition: none;
+  }
+}

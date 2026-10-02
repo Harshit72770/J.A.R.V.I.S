@@ -36,6 +36,9 @@ const path = require('path');
 const { searchWeb, searchYouTube } = require('./web-search.js');
 const browserControl = require('./browser-control.js');
 const musicControl = require('./music-control.js');
+// Dashboard telemetry: real CPU/RAM/GPU/battery/disk stats + the ring of
+// actual bridge requests (GET /stats, GET /activity). Zero-dependency.
+const monitor = require('./monitor.js');
 
 const PORT = 4777;
 const HOST = '127.0.0.1';
@@ -562,6 +565,8 @@ function groqProxy(req, res, send) {
           'Cache-Control': 'no-cache, no-transform',
           ...CORS,
         });
+        // Real activity: a completed chat completion IS the user command.
+        monitor.logAi(up.statusCode || 502, body);
         up.pipe(res);
       }
     );
@@ -795,6 +800,21 @@ const server = http.createServer(async (req, res) => {
       default:
         result = fail(`Unknown action "${kind}".`);
     }
+    monitor.logActivity({
+      kind: 'open',
+      label:
+        kind === 'url'
+          ? 'Link opened'
+          : kind === 'app'
+          ? 'App launched'
+          : kind === 'folder'
+          ? 'Folder opened'
+          : kind === 'file'
+          ? 'File opened'
+          : 'Launch by search',
+      detail: target,
+      ok: result && result.ok === true,
+    });
     send(result.ok ? 200 : 400, result);
     return;
   }
@@ -805,7 +825,12 @@ const server = http.createServer(async (req, res) => {
       send(405, fail('Use POST /groq with a JSON body.'));
       return;
     }
-    groqProxy(req, res, send);
+    groqProxy(req, res, (status, payload) => {
+      // Failures before the upstream exists arrive here; streamed successes
+      // are logged from inside groqProxy. Either way the ring stays real.
+      monitor.logAi(status, null, payload && payload.error);
+      send(status, payload);
+    });
     return;
   }
 
@@ -813,9 +838,19 @@ const server = http.createServer(async (req, res) => {
   // GET  /media                 → current { volume, muted, brightness }
   // POST /media {device, action, value?} → change it, reply with fresh state
   if (url.pathname === '/media') {
-    const respond = (promise) => {
+    // `logInfo` is passed only by POST (a real change) — GET state polls
+    // never enter the activity ring.
+    const respond = (promise, logInfo) => {
       promise
         .then((msg) => {
+          if (logInfo) {
+            monitor.logActivity({
+              kind: 'media',
+              label: logInfo.label,
+              detail: logInfo.detail,
+              ok: Boolean(msg.ok),
+            });
+          }
           send(msg.ok ? 200 : 400, {
             ok: !!msg.ok,
             volume: typeof msg.volume === 'number' ? msg.volume : null,
@@ -889,7 +924,11 @@ const server = http.createServer(async (req, res) => {
           device,
           action,
           value: Number.isFinite(value) ? Math.round(value) : null,
-        })
+        }),
+        {
+          label: `${device === 'volume' ? 'Volume' : 'Brightness'} · ${action}`,
+          detail: Number.isFinite(value) ? String(Math.round(value)) : '',
+        }
       );
     });
     return;
@@ -905,10 +944,22 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const result = await searchWeb(q);
+      monitor.logActivity({
+        kind: 'search',
+        label: 'Web search',
+        detail: q,
+        ok: true,
+      });
       send(200, { ok: true, ...result });
     } catch (e) {
       // Honest failure — the HUD tells the user the search failed instead of
       // the model answering from training memory.
+      monitor.logActivity({
+        kind: 'search',
+        label: 'Web search',
+        detail: q,
+        ok: false,
+      });
       send(200, { ok: false, error: (e && e.message) || 'Web search failed.' });
     }
     return;
@@ -924,8 +975,20 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const result = await searchYouTube(q);
+      monitor.logActivity({
+        kind: 'ytsearch',
+        label: 'YouTube search',
+        detail: q,
+        ok: true,
+      });
       send(200, { ok: true, ...result });
     } catch (e) {
+      monitor.logActivity({
+        kind: 'ytsearch',
+        label: 'YouTube search',
+        detail: q,
+        ok: false,
+      });
       send(200, { ok: false, error: (e && e.message) || 'YouTube search failed.' });
     }
     return;
@@ -960,6 +1023,12 @@ const server = http.createServer(async (req, res) => {
     const result = await browserControl.exec(action, {
       url: parsed.url,
       query: parsed.query,
+    });
+    monitor.logActivity({
+      kind: 'browser',
+      label: `Browser · ${action}`,
+      detail: parsed.url || parsed.query || '',
+      ok: result && result.ok !== false,
     });
     send(200, result);
     return;
@@ -1009,7 +1078,49 @@ const server = http.createServer(async (req, res) => {
       seconds: parsed.seconds,
       queue: Array.isArray(parsed.queue) ? parsed.queue.slice(0, 10) : undefined,
     });
+    const MUSIC_LABELS = {
+      play: 'Play',
+      playIndex: 'Play from queue',
+      playUrl: 'Play URL',
+      pause: 'Pause',
+      resume: 'Resume',
+      stop: 'Stop',
+      seekBy: `Seek ${parsed.seconds > 0 ? '+' : ''}${parsed.seconds}s`,
+      seekTo: 'Seek to position',
+      next: 'Next track',
+      previous: 'Previous track',
+    };
+    monitor.logActivity({
+      kind: 'music',
+      label: MUSIC_LABELS[action] || `Music · ${action}`,
+      detail: parsed.query || parsed.url || '',
+      ok: result && result.ok !== false,
+    });
     send(200, result);
+    return;
+  }
+
+  // ── DASHBOARD: real system telemetry (monitor.js — OS data, never fake) ──
+  if (url.pathname === '/stats') {
+    monitor
+      .getStats()
+      .then((stats) =>
+        send(200, {
+          ...stats,
+          services: {
+            ...(stats.services || {}),
+            // Presence only — the key itself never leaves this process.
+            groqKeyPresent: Boolean(groqKey()),
+          },
+        })
+      )
+      .catch((err) => send(500, fail(err && err.message)));
+    return;
+  }
+
+  // ── DASHBOARD: recent real activity + session counters (monitor.js) ──────
+  if (url.pathname === '/activity') {
+    send(200, monitor.getActivity());
     return;
   }
 

@@ -45,3 +45,38 @@
     width: 168px;
   }
 }
+
+/* ── Route placeholder pages (DASHBOARD / ABOUT) ───────────────────────────
+   New pages requested for navigation only. Sits below the navbar (z-index
+   1000) so navigation and the existing Settings dropdown stay usable; the
+   Jarvis interface itself is untouched and simply hidden while here. */
+.route-placeholder {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 72px 24px 24px; /* clear the navbar band */
+  text-align: center;
+}
+
+.route-placeholder-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.35em;
+  color: #00f0ff;
+  text-shadow: 0 0 18px rgba(0, 240, 255, 0.45);
+}
+
+.route-placeholder-note {
+  max-width: 440px;
+  margin: 0;
+  color: #7fb3c2;
+  font-size: 14px;
+  line-height: 1.6;
+  opacity: 0.85;
+}

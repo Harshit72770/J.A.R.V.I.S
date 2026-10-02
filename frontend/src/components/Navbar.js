@@ -10,6 +10,8 @@ const Navbar = ({
   onLanguageChange,
   groqModel = 'qwen/qwen3.8-27b',
   onGroqModelChange,
+  activePage,
+  onNavigate,
 }) => {
   const [activeItem, setActiveItem] = useState('HOME');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -17,6 +19,10 @@ const Navbar = ({
   const [blobSectionOpen, setBlobSectionOpen] = useState(false);
   const [languageSectionOpen, setLanguageSectionOpen] = useState(false);
   const [groqSectionOpen, setGroqSectionOpen] = useState(true);
+
+  // Route-driven highlight when App provides the current page; the internal
+  // state remains as a fallback so this component still works standalone.
+  const active = activePage || activeItem;
 
   const settingsRef = useRef(null);
 
@@ -59,7 +65,12 @@ const Navbar = ({
   }, [settingsOpen]);
 
   const handleNavClick = (id) => {
-    setActiveItem(id);
+    if (onNavigate) {
+      // App owns the route: HOME / DASHBOARD / ABOUT change the URL + page.
+      onNavigate(id);
+    } else {
+      setActiveItem(id);
+    }
     if (id === 'SETTINGS') {
       setSettingsOpen((prev) => !prev);
     } else {
@@ -87,7 +98,7 @@ const Navbar = ({
             <li key={item.id} className="nav-item">
               <button
                 className={`nav-link-btn ${
-                  activeItem === item.id ||
+                  active === item.id ||
                   (item.id === 'SETTINGS' && settingsOpen)
                     ? 'active'
                     : ''
@@ -95,7 +106,7 @@ const Navbar = ({
                 onClick={() => handleNavClick(item.id)}
               >
                 <span className="nav-link-text">{item.label}</span>
-                {(activeItem === item.id ||
+                {(active === item.id ||
                   (item.id === 'SETTINGS' && settingsOpen)) && (
                   <span className="active-indicator" />
                 )}
@@ -475,7 +486,7 @@ const Navbar = ({
             <button
               key={item.id}
               className={`mobile-nav-btn ${
-                activeItem === item.id ? 'active' : ''
+                active === item.id ? 'active' : ''
               }`}
               onClick={() => handleNavClick(item.id)}
             >
